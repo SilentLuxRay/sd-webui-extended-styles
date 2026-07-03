@@ -1,0 +1,12 @@
+# local config (contains a machine-specific path)
+config.json
+
+# python
+__pycache__/
+*.pyc
+
+# backups created when saving styles
+*.bak
+
+# do NOT publish style files: users keep their own CSVs locally
+styles/*.csv
