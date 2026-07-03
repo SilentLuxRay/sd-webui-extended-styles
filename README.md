@@ -8,7 +8,7 @@ template contain as many slots as you want — `{prompt_face}`, `{prompt_haircol
 `{prompt_flowercolor}`, … — and gives you a labeled field for each, so you can reuse one template for
 many different results without rewriting it every time.
 
-![preview](images/preview.png)
+![preview](images/preview-1.png)
 
 ## Features
 
@@ -78,6 +78,15 @@ placeholders wherever you need them. Up to **8** placeholders per style (see `MA
 - **Dynamic Prompts:** generating with a completely empty prompt while the Dynamic Prompts extension is
   enabled raises `StopIteration` (a Dynamic Prompts limitation). If you use both together, don't leave
   the prompt box empty — press **Write to main prompt** first, or type at least a space.
+
+## Screenshots
+
+<!-- Rename your images to images/preview-1.png ... preview-5.png and edit the captions below. -->
+
+| | |
+|---|---|
+| ![](images/preview-2.png) | ![](images/preview-3.png) |
+| ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## License
 
