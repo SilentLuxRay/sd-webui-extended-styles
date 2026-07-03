@@ -7,6 +7,3 @@ __pycache__/
 
 # backups created when saving styles
 *.bak
-
-# do NOT publish style files: users keep their own CSVs locally
-styles/*.csv
