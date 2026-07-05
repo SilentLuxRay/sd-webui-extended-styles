@@ -346,28 +346,43 @@ class ExtendedStyles(scripts.Script):
 
             # ---------------------------------------------------------- create / edit style
             with gr.Accordion("Create / edit style", open=False):
-                gr.Markdown("Write the prompt using named placeholders, e.g. "
-                            "`portrait of {prompt_face} with {prompt_haircolor}`. "
-                            "If the name already exists in the chosen file it is **updated**; otherwise it is added. "
-                            "A `.bak` backup is created before writing.")
+                gr.Markdown("Pick a **category** and the **style to edit**: the fields below fill in "
+                            "automatically. To create a new one, press **New** and type. "
+                            "If the name already exists in the chosen file it is **updated**; otherwise it is added "
+                            "(a `.bak` backup is made before writing).")
+                with gr.Row():
+                    edit_cat = gr.Dropdown(choices=cats, value=c0, label="Category to edit")
+                    edit_style = gr.Dropdown(choices=style_choices(c0), value=s0, label="Style to edit")
                 save_file = gr.Dropdown(choices=cats, value=c0, label="Save to file")
                 save_name = gr.Textbox(label="Style name", placeholder="e.g. Girl with flower")
                 save_pos = gr.Textbox(label="Prompt", lines=3,
                                       placeholder="a girl {prompt_face} holding the {prompt_flowercolor} flower...")
                 save_neg = gr.Textbox(label="Negative prompt (optional)", lines=2)
                 with gr.Row():
-                    load_btn = gr.Button("Load the one selected above")
+                    new_btn = gr.Button("New (clear the fields)")
                     save_btn = gr.Button("Save style", variant="primary")
                 save_status = gr.Markdown("")
 
-                # load the currently selected style into the edit fields
-                def on_load_selected(c, s):
+                # selecting a style loads it into the edit fields
+                def load_for_edit(c, s):
                     st = STYLES.get(c, {}).get(s)
                     if not st:
-                        return gr.update(), gr.update(), gr.update(), gr.update()
+                        return gr.update(value=c), gr.update(value=(s or "")), gr.update(value=""), gr.update(value="")
                     return gr.update(value=c), gr.update(value=s), gr.update(value=st["pos"]), gr.update(value=st["neg"])
-                load_btn.click(on_load_selected, inputs=[cat, style],
-                               outputs=[save_file, save_name, save_pos, save_neg])
+
+                def on_edit_cat(c):
+                    ch = style_choices(c)
+                    ns = ch[0] if ch else None
+                    return [gr.update(choices=ch, value=ns)] + list(load_for_edit(c, ns))
+                edit_cat.change(on_edit_cat, inputs=[edit_cat],
+                                outputs=[edit_style, save_file, save_name, save_pos, save_neg])
+                edit_style.change(load_for_edit, inputs=[edit_cat, edit_style],
+                                  outputs=[save_file, save_name, save_pos, save_neg])
+
+                # new style: clear name/prompt/negative (keeps the chosen file)
+                def on_new():
+                    return gr.update(value=""), gr.update(value=""), gr.update(value="")
+                new_btn.click(on_new, outputs=[save_name, save_pos, save_neg])
 
                 # save and refresh all menus
                 def on_save(f, target, name, pos, neg):
@@ -383,9 +398,12 @@ class ExtendedStyles(scripts.Script):
                              gr.update(choices=style_choices(ncat), value=nstyle)]
                             + field_updates(ncat, nstyle)
                             + [build_result(ncat, nstyle),
-                               gr.update(choices=cs, value=(target if target in cs else ncat))])
+                               gr.update(choices=cs, value=(target if target in cs else ncat)),
+                               gr.update(choices=cs, value=ncat),
+                               gr.update(choices=style_choices(ncat), value=nstyle)])
                 save_btn.click(on_save, inputs=[folder, save_file, save_name, save_pos, save_neg],
-                               outputs=[save_status, cat, style] + fields + [result, save_file])
+                               outputs=[save_status, cat, style] + fields
+                                       + [result, save_file, edit_cat, edit_style])
 
         return [enabled, cat, style] + fields
 
