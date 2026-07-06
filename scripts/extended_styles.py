@@ -25,8 +25,8 @@ CONFIG_PATH = os.path.join(BASEDIR, "config.json")
 STYLES = {}   # { category: { name: {"pos": str, "neg": str} } }
 FILES = {}    # { category: path_of_the_csv_file }
 
-PH_RE = r"\{prompt(_[A-Za-z0-9]+|\d*)\}"          # placeholder in the template
-TAG_RE = r"<\s*([A-Za-z0-9_]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
+PH_RE = r"\{prompt(_[A-Za-z0-9-]+|\d*)\}"          # placeholder in the template
+TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
 
 def default_folder():
     return os.path.join(BASEDIR, "styles")
@@ -91,6 +91,10 @@ def _key_from_raw(raw):
     if raw.startswith("_"):
         return raw[1:]
     return raw
+
+def display_label(key):
+    # a hyphen in the placeholder name is shown as a space in the field label
+    return "prompt" if key == "_" else key.replace("-", " ")
 
 def placeholders(tpl):
     seen = []
@@ -184,7 +188,7 @@ def field_updates(cat, name):
     for i in range(MAXF):
         if i < len(keys):
             k = keys[i]
-            ups.append(gr.update(visible=True, label=("prompt" if k == "_" else k), value=""))
+            ups.append(gr.update(visible=True, label=display_label(k), value=""))
         else:
             ups.append(gr.update(visible=False, value=""))
     return ups
@@ -286,7 +290,7 @@ class ExtendedStyles(scripts.Script):
             for i in range(MAXF):
                 if i < len(init_keys):
                     k = init_keys[i]
-                    fields.append(gr.Textbox(label=("prompt" if k == "_" else k), visible=True, value=""))
+                    fields.append(gr.Textbox(label=display_label(k), visible=True, value=""))
                 else:
                     fields.append(gr.Textbox(label="", visible=False, value=""))
 
