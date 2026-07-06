@@ -14,12 +14,16 @@ many different results without rewriting it every time.
 
 - **Multiple placeholders per style** — `{prompt}`, numbered `{prompt1}`, and named `{prompt_xxx}`.
 - **Auto‑generated fields** — pick a style and one labeled input appears per placeholder.
+- **Optional placeholders** — leave a field empty and its placeholder is simply dropped from the prompt
+  (leftover spaces and commas are cleaned up), so one template covers cases with or without a detail.
+- **Readable field labels** — a hyphen in a named placeholder is shown as a space, e.g.
+  `{prompt_hair-color}` → label "hair color".
 - **Built‑in translation** — write your values in any language and translate them to English with one
   click (auto‑detects the language; text already in English is left unchanged).
 - **Write to main prompt** — one button drops the assembled prompt into the real prompt box, so
   *Send to img2img*, PNG info and everything downstream just work.
-- **Create / edit styles** — add or update styles and save them straight into your `.csv` files
-  (a `.bak` backup is made before writing).
+- **Create / edit styles** — pick a style to edit and its fields fill in automatically; saving updates
+  the CSV in place (or adds a new one), with a `.bak` backup before writing.
 - **Works alongside prompt editors** like *prompt‑all‑in‑one* — values are filled in this panel and the
   substitution happens server‑side.
 
@@ -46,6 +50,13 @@ many different results without rewriting it every time.
 > extension rewrites the prompt automatically at generation time and you can leave the main prompt box
 > empty. (See the note about Dynamic Prompts below.)
 
+### Creating or editing a style
+
+Open **Create / edit style**, then pick the **Category** and **Style to edit** — the name, prompt and
+negative fields fill in automatically. Change what you want and press **Save style** (same name → updates
+it in place; a new name → adds it). Press **New** to clear the fields and start from scratch. A `.bak`
+backup of the CSV is made before every save.
+
 ## Placeholder syntax
 
 | In the CSV | Meaning | Field label |
@@ -53,8 +64,15 @@ many different results without rewriting it every time.
 | `{prompt}` | classic single slot | `prompt` |
 | `{prompt1}`, `{prompt2}` | numbered slots | `1`, `2` |
 | `{prompt_face}`, `{prompt_haircolor}` | **named** slots (recommended) | `face`, `haircolor` |
+| `{prompt_hair-color}` | named slot, hyphen shown as a space | `hair color` |
 
 Named placeholders are recommended because the field label tells you exactly what each slot is for.
+Use a hyphen when you want a multi‑word label (`{prompt_eye-color}` → "eye color").
+
+Any field you leave empty is **optional**: its placeholder is removed from the final prompt (instead of
+appearing literally), and the surrounding spaces and commas are tidied up. Tip: for optional details,
+place the placeholder as its own comma‑separated clause (e.g. `a girl, {prompt_extra}, red hair`) so it
+disappears cleanly when empty.
 
 ## CSV format
 
@@ -87,6 +105,14 @@ placeholders wherever you need them. Up to **8** placeholders per style (see `MA
 |---|---|
 | ![](images/preview-2.png) | ![](images/preview-3.png) |
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
+
+## Changelog
+
+- **Optional placeholders** — empty fields are dropped from the prompt, with cleanup of leftover
+  spaces and commas.
+- **Hyphen labels** — a hyphen in a named placeholder is shown as a space in the field label.
+- **Direct style editing** — dropdowns to pick the style to edit (fields auto‑fill) plus a **New** button.
+- **Faster translation** — all fields are translated in a single request.
 
 ## License
 
