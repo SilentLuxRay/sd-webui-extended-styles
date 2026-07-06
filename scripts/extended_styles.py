@@ -119,10 +119,13 @@ def fill(tpl, vals):
         return ""
     def repl(m):
         v = vals.get(_key_from_raw(m.group(1)), "")
-        return v if v.strip() else m.group(0)
+        return v if v.strip() else ""          # empty field -> placeholder removed (optional)
     out = re.sub(PH_RE, repl, tpl)
-    out = re.sub(r"[ \t]{2,}", " ", out)
-    out = re.sub(r"\s+([,.;])", r"\1", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)            # collapse extra spaces
+    out = re.sub(r"\s+([,.;])", r"\1", out)          # no space before , . ;
+    out = re.sub(r"([,;])(?:\s*[,;])+", r"\1", out)  # collapse repeated , or ;
+    out = re.sub(r"^[\s,;]+", "", out)               # trim leading punctuation/space
+    out = re.sub(r"[\s,;]+$", "", out)               # trim trailing punctuation/space
     return out.strip()
 
 def vals_from_fields(keys, field_vals):
