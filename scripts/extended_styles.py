@@ -24,6 +24,7 @@ BASEDIR = scripts.basedir()
 CONFIG_PATH = os.path.join(BASEDIR, "config.json")
 STYLES = {}   # { category: { name: {"pos": str, "neg": str} } }
 FILES = {}    # { category: path_of_the_csv_file }
+PREVIEW_DIR = os.path.join(BASEDIR, "previews")  # style preview thumbnails
 
 PH_RE = r"\{prompt(_[A-Za-z0-9-]+|\d*)\}"          # placeholder in the template
 TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
@@ -31,19 +32,25 @@ TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the
 def default_folder():
     return os.path.join(BASEDIR, "styles")
 
-def get_folder():
+def _load_cfg():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f).get("folder") or default_folder()
+            return json.load(f) or {}
     except Exception:
-        return default_folder()
+        return {}
 
-def save_folder(folder):
+def _save_cfg(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"folder": folder}, f)
+            json.dump(cfg, f)
     except Exception:
         pass
+
+def get_folder():
+    return _load_cfg().get("folder") or default_folder()
+
+def save_folder(folder):
+    cfg = _load_cfg(); cfg["folder"] = folder; _save_cfg(cfg)
 
 # ------------------------------------------------------------------ CSV loading
 def scan_styles(folder):
@@ -74,6 +81,8 @@ def scan_styles(folder):
             if not r:
                 continue
             name = (r[0] if len(r) > 0 else "").strip()
+            if re.match(r"^-{2,}.*-{2,}$", name):   # separator/category row (----XXX----): not a style
+                continue
             pos  = (r[1] if len(r) > 1 else "")
             neg  = (r[2] if len(r) > 2 else "")
             if not name and not pos:
@@ -262,6 +271,75 @@ def save_style(folder, cat, name, pos, neg):
     verb = "updated" if updated else "saved"
     return True, "Style \"%s\" %s in %s" % (name, verb, os.path.basename(path))
 
+# ------------------------------------------------------------------ previews (thumbnails)
+def _safe(s):
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", s or "")
+
+def preview_path(cat, name):
+    return os.path.join(PREVIEW_DIR, "%s__%s.png" % (_safe(cat), _safe(name)))
+
+def make_placeholder(name):
+    """Gray tile with the name, for styles without a preview."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (200, 200), (58, 58, 64))
+    d = ImageDraw.Draw(img)
+    lines, line = [], ""
+    for w in (name or "").split():
+        if len(line) + len(w) + 1 > 16:
+            lines.append(line); line = w
+        else:
+            line = (line + " " + w).strip()
+    if line:
+        lines.append(line)
+    lines = lines[:6]
+    y = 100 - len(lines) * 7
+    for ln in lines:
+        d.text((10, y), ln[:22], fill=(205, 205, 210))
+        y += 14
+    return img
+
+def gallery_items(cat):
+    items = []
+    for name in style_choices(cat):
+        p = preview_path(cat, name)
+        items.append((p if os.path.isfile(p) else make_placeholder(name), name))
+    return items
+
+def _src_to_local(src):
+    """From a src like '.../file=C:/.../img.png?...' extract the local path."""
+    import urllib.parse
+    if not src:
+        return None
+    i = src.find("file=")
+    if i != -1:
+        p = src[i + 5:].split("&")[0].split("?")[0]
+        return urllib.parse.unquote(p)
+    return None
+
+def save_preview_image(cat, name, image):
+    """image: file path or PIL object. Saves the style thumbnail."""
+    from PIL import Image
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    img = Image.open(image) if isinstance(image, str) else image
+    img = img.convert("RGB")
+    img.thumbnail((256, 256))
+    img.save(preview_path(cat, name), "PNG")
+
+def js_get_last_image(gid):
+    """JS: read the src of the last image shown in the output gallery."""
+    return (
+        "(c, s, _) => {"
+        "  const root = (typeof gradioApp!=='undefined')?gradioApp():document;"
+        "  const g = root.querySelector('#%s');"
+        "  let img = null;"
+        "  if (g) {"
+        "    img = g.querySelector('.preview img') || g.querySelector('button.selected img');"
+        "    if (!img) { const a = g.querySelectorAll('img'); if (a.length) img = a[a.length-1]; }"
+        "  }"
+        "  return [c, s, img ? img.src : ''];"
+        "}" % gid
+    )
+
 # ------------------------------------------------------------------ Gradio Script
 class ExtendedStyles(scripts.Script):
     def title(self):
@@ -284,6 +362,17 @@ class ExtendedStyles(scripts.Script):
             with gr.Row():
                 cat = gr.Dropdown(choices=cats, value=c0, label="Category")
                 style = gr.Dropdown(choices=style_choices(c0), value=s0, label="Template")
+
+            gal_id = "extended_styles_gallery_i2i" if is_img2img else "extended_styles_gallery_t2i"
+            gallery = gr.Gallery(value=gallery_items(c0), label="Style previews (click to select)",
+                                 columns=4, height="auto", object_fit="cover", allow_preview=False,
+                                 elem_id=gal_id)
+            slider_id = "es_size_slider_i2i" if is_img2img else "es_size_slider_t2i"
+            # the slider is handled entirely client-side (javascript/extended_styles.js):
+            # it applies and remembers the size via localStorage, without going through the
+            # server (so it does not conflict with Forge's ui-config).
+            gr.Slider(minimum=50, maximum=200, value=150, step=5,
+                      label="Thumbnail size (px)", elem_id=slider_id)
 
             gr.Markdown("Fill in the fields below: the **final prompt** is built and used at generation "
                         "(you can leave the main prompt box empty).")
@@ -325,16 +414,26 @@ class ExtendedStyles(scripts.Script):
             tr_btn.click(on_translate, inputs=[cat, style] + fields,
                          outputs=fields + [result, tr_status])
 
-            # category change -> update template list, fields and preview
+            # category change -> update template list, fields, preview and gallery
             def on_cat(c):
                 ch = style_choices(c)
                 ns = ch[0] if ch else None
-                return [gr.update(choices=ch, value=ns)] + field_updates(c, ns) + [build_result(c, ns)]
-            cat.change(on_cat, inputs=[cat], outputs=[style] + fields + [result])
+                return ([gr.update(choices=ch, value=ns)] + field_updates(c, ns)
+                        + [build_result(c, ns), gallery_items(c)])
+            cat.change(on_cat, inputs=[cat], outputs=[style] + fields + [result, gallery])
 
             def on_style(c, s):
                 return field_updates(c, s) + [build_result(c, s)]
             style.change(on_style, inputs=[cat, style], outputs=fields + [result])
+
+            # click on a thumbnail -> select that style
+            def on_gallery_select(c, evt: gr.SelectData):
+                ch = style_choices(c)
+                if evt.index is None or evt.index >= len(ch):
+                    return [gr.update()] + [gr.update() for _ in range(MAXF)] + [gr.update()]
+                s = ch[evt.index]
+                return [gr.update(value=s)] + field_updates(c, s) + [build_result(c, s)]
+            gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + fields + [result])
 
             def on_reload(f):
                 save_folder(f)
@@ -344,12 +443,58 @@ class ExtendedStyles(scripts.Script):
                 ch = style_choices(nc)
                 ns = ch[0] if ch else None
                 return ([gr.update(choices=cs, value=nc), gr.update(choices=ch, value=ns)]
-                        + field_updates(nc, ns) + [build_result(nc, ns)])
-            reload_btn.click(on_reload, inputs=[folder], outputs=[cat, style] + fields + [result])
+                        + field_updates(nc, ns) + [build_result(nc, ns), gallery_items(nc)])
+            reload_btn.click(on_reload, inputs=[folder], outputs=[cat, style] + fields + [result, gallery])
 
             # live update of the final prompt while typing in the fields
             for tb in fields:
                 tb.change(build_result, inputs=[cat, style] + fields, outputs=[result])
+
+            # ---------------------------------------------------------- set style preview
+            with gr.Accordion("Set style preview", open=False):
+                gr.Markdown("Select the style (menu or carousel), then **generate** an image and press "
+                            "**Apply last generation**. Alternatively drag an image and press "
+                            "**Apply uploaded image**. Previews are saved in `previews/`.")
+                img_src = gr.Textbox(visible=False)
+                apply_auto_btn = gr.Button("Apply last generation", variant="primary")
+                prev_upload = gr.Image(label="...or drag an image here", type="filepath")
+                apply_manual_btn = gr.Button("Apply uploaded image")
+                prev_status = gr.Markdown("")
+
+                def on_apply_auto(c, s, src):
+                    if not s:
+                        return gr.update(), "Select a style first."
+                    try:
+                        if src and src.startswith("data:"):
+                            import base64
+                            from io import BytesIO
+                            from PIL import Image
+                            img = Image.open(BytesIO(base64.b64decode(src.split(",", 1)[1])))
+                            save_preview_image(c, s, img)
+                        else:
+                            path = _src_to_local(src)
+                            if not path or not os.path.isfile(path):
+                                return gr.update(), "No image found: generate an image first."
+                            save_preview_image(c, s, path)
+                    except Exception as e:
+                        return gr.update(), "Error: %s" % e
+                    return gr.update(value=gallery_items(c)), "Preview saved for \"%s\"." % s
+                apply_auto_btn.click(on_apply_auto, inputs=[cat, style, img_src],
+                                     outputs=[gallery, prev_status],
+                                     _js=js_get_last_image("img2img_gallery" if is_img2img else "txt2img_gallery"))
+
+                def on_apply_manual(c, s, img):
+                    if not s:
+                        return gr.update(), "Select a style first."
+                    if not img:
+                        return gr.update(), "No image uploaded."
+                    try:
+                        save_preview_image(c, s, img)
+                    except Exception as e:
+                        return gr.update(), "Error: %s" % e
+                    return gr.update(value=gallery_items(c)), "Preview saved for \"%s\"." % s
+                apply_manual_btn.click(on_apply_manual, inputs=[cat, style, prev_upload],
+                                       outputs=[gallery, prev_status])
 
             # ---------------------------------------------------------- create / edit style
             with gr.Accordion("Create / edit style", open=False):
@@ -407,10 +552,11 @@ class ExtendedStyles(scripts.Script):
                             + [build_result(ncat, nstyle),
                                gr.update(choices=cs, value=(target if target in cs else ncat)),
                                gr.update(choices=cs, value=ncat),
-                               gr.update(choices=style_choices(ncat), value=nstyle)])
+                               gr.update(choices=style_choices(ncat), value=nstyle),
+                               gallery_items(ncat)])
                 save_btn.click(on_save, inputs=[folder, save_file, save_name, save_pos, save_neg],
                                outputs=[save_status, cat, style] + fields
-                                       + [result, save_file, edit_cat, edit_style])
+                                       + [result, save_file, edit_cat, edit_style, gallery])
 
         return [enabled, cat, style] + fields
 

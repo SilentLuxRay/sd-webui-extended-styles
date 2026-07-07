@@ -14,6 +14,11 @@ many different results without rewriting it every time.
 
 - **Multiple placeholders per style** — `{prompt}`, numbered `{prompt1}`, and named `{prompt_xxx}`.
 - **Auto‑generated fields** — pick a style and one labeled input appears per placeholder.
+- **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
+  last generated image with one click, or by dropping an image. A slider resizes the thumbnails and the
+  size is remembered (per browser).
+- **Category separators** — rows named `----SECTION----` in a CSV act as visual dividers and are hidden
+  from the style list, so you can organize big files.
 - **Optional placeholders** — leave a field empty and its placeholder is simply dropped from the prompt
   (leftover spaces and commas are cleaned up), so one template covers cases with or without a detail.
 - **Readable field labels** — a hyphen in a named placeholder is shown as a space, e.g.
@@ -57,6 +62,14 @@ negative fields fill in automatically. Change what you want and press **Save sty
 it in place; a new name → adds it). Press **New** to clear the fields and start from scratch. A `.bak`
 backup of the CSV is made before every save.
 
+### Style previews
+
+Every style shows a thumbnail in the **Style previews** carousel (a gray name tile until you set one);
+click a thumbnail to select that style. Use the **Thumbnail size** slider to resize the carousel — the
+value is remembered in your browser. To set a preview, open **Set style preview**: select the style,
+**generate** an image and press **Apply last generation**, or drag an image and press **Apply uploaded
+image**. Previews are stored as PNGs in the extension's `previews/` folder.
+
 ## Placeholder syntax
 
 | In the CSV | Meaning | Field label |
@@ -87,6 +100,9 @@ Detailed portrait,portrait of a woman {prompt_face} with {prompt_haircolor},lowr
 To extend an existing single‑`{prompt}` style, just open the CSV and add more `{prompt_xxx}`
 placeholders wherever you need them. Up to **8** placeholders per style (see `MAXF` in the script).
 
+To group styles inside one file, add rows whose name is wrapped in dashes, e.g. `----WOMEN----`. These
+are treated as separators and hidden from the style list (they still remain in the file).
+
 ## Notes
 
 - **Translation** uses the free Google Translate endpoint and therefore needs an internet connection.
@@ -108,6 +124,9 @@ placeholders wherever you need them. Up to **8** placeholders per style (see `MA
 
 ## Changelog
 
+- **Preview carousel** — per-style thumbnails (click to select), set from the last generation or an
+  uploaded image, with a size slider remembered per browser.
+- **Category separators** — `----SECTION----` rows are hidden from the style list.
 - **Optional placeholders** — empty fields are dropped from the prompt, with cleanup of leftover
   spaces and commas.
 - **Hyphen labels** — a hyphen in a named placeholder is shown as a space in the field label.

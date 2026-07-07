@@ -7,3 +7,6 @@ __pycache__/
 
 # backups created when saving styles
 *.bak
+
+# user-generated style thumbnails
+previews/
