@@ -124,6 +124,10 @@ are treated as separators and hidden from the style list (they still remain in t
 
 ## Changelog
 
+### v1.1.0
+- Hide the numeric value box next to the thumbnail-size slider (cosmetic).
+
+### v1.0.0
 - **Preview carousel** — per-style thumbnails (click to select), set from the last generation or an
   uploaded image, with a size slider remembered per browser.
 - **Category separators** — `----SECTION----` rows are hidden from the style list.

@@ -47,6 +47,14 @@
             applyCss(gid, v);
         });
     }
+    function hideNumberBox(sid) {
+        var wrap = gradioApp().querySelector('#' + sid);
+        if (!wrap || wrap.querySelector('style.es-nonum')) return;
+        var st = document.createElement('style');
+        st.className = 'es-nonum';
+        st.textContent = '#' + sid + ' input:not([type="range"]){display:none!important;}';
+        wrap.appendChild(st);
+    }
     function init() {
         var v = getSize();
         Object.keys(TABS).forEach(function (k) {
@@ -54,6 +62,7 @@
             applyCss(t.gid, v);
             setSliderDisplay(t.sid, v);
             hookSlider(t.sid, t.gid);
+            hideNumberBox(t.sid);
         });
     }
 
