@@ -14,6 +14,9 @@ many different results without rewriting it every time.
 
 - **Multiple placeholders per style** — `{prompt}`, numbered `{prompt1}`, and named `{prompt_xxx}`.
 - **Auto‑generated fields** — pick a style and one labeled input appears per placeholder.
+- **Choice variables** — `{prompt_Gender=Male|Female}` becomes a dropdown; later placeholders with the
+  same name follow the chosen option by index, so one menu drives several coordinated substitutions.
+  Multiple independent variables per style are supported.
 - **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
   last generated image with one click, or by dropping an image. A slider resizes the thumbnails and the
   size is remembered (per browser).
@@ -87,6 +90,29 @@ appearing literally), and the surrounding spaces and commas are tidied up. Tip: 
 place the placeholder as its own comma‑separated clause (e.g. `a girl, {prompt_extra}, red hair`) so it
 disappears cleanly when empty.
 
+### Choice variables
+
+Add options after `=`, separated by `|`, to turn a placeholder into a **dropdown**:
+
+```
+{prompt_Gender=Male|Female}
+```
+
+The **first** occurrence of a name defines the menu (its options are the labels). Every later
+placeholder with the **same name** is linked to it: it inserts its own option at the **same index** as
+the selected choice. Commas inside an option go straight into the prompt.
+
+```
+a human {prompt_Gender=Male|Female} in a loose shirt revealing his {prompt_Gender=hairy chest|chest with a pink bra}
+```
+
+- Choosing **Male** → "a human Male in a loose shirt revealing his hairy chest"
+- Choosing **Female** → "a human Female in a loose shirt revealing his chest with a pink bra"
+
+You can define **several independent variables** in one style (up to 6), each with its own dropdown.
+If a linked option list is shorter than the selected index, that spot is left empty. Tip: put fixed
+words that must change with the choice *inside* the options (e.g. `{prompt_Gender=A man|A woman}`).
+
 ## CSV format
 
 Standard Forge/A1111 styles format:
@@ -123,6 +149,10 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v2.0.0
+- **Choice variables** — `{prompt_Name=opt1|opt2}` placeholders become dropdowns; later placeholders
+  with the same name follow the selected option by index. Multiple independent variables per style.
 
 ### v1.1.0
 - Hide the numeric value box next to the thumbnail-size slider (cosmetic).

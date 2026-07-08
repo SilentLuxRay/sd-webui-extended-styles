@@ -1,13 +1,18 @@
 # Extended Styles - extension for Stable Diffusion Forge / Forge Neo / A1111
 #
-# Styles with MULTIPLE, NAMED placeholders:
-#   {prompt}              -> classic, single placeholder
-#   {prompt1} {prompt2}   -> numbered
-#   {prompt_face} ...     -> named (recommended)
+# Placeholders in the CSV template:
+#   {prompt}                       classic, single placeholder
+#   {prompt1} {prompt2} ...        numbered
+#   {prompt_face} ...              named (text field)
+#   {prompt_Gender=Male|Female}    choice VARIABLE -> dropdown menu
 #
-# You fill the values INSIDE this panel (labeled fields), so it also works with
-# third-party prompt editors (e.g. "prompt-all-in-one"): the substitution happens
-# server-side at generation time, without touching the prompt text box.
+# Variables: the FIRST occurrence of "_Name=opt1|opt2" creates the dropdown (the options are
+# the labels). Later occurrences with the same _Name use the CHOSEN INDEX and insert their own
+# option at the same position (commas inside an option go straight into the prompt). Index out of
+# range -> empty.
+#
+# You fill the values INSIDE this panel, so it also works with third-party prompt editors
+# (e.g. prompt-all-in-one): the substitution happens at generation time.
 
 import os
 import re
@@ -17,7 +22,8 @@ import shutil
 import gradio as gr
 import modules.scripts as scripts
 
-MAXF = 8  # maximum number of placeholders handled per style
+MAXF = 8  # max number of text fields per style
+MAXV = 6  # max number of choice variables (menus) per style
 
 # ------------------------------------------------------------------ global state
 BASEDIR = scripts.basedir()
@@ -26,7 +32,8 @@ STYLES = {}   # { category: { name: {"pos": str, "neg": str} } }
 FILES = {}    # { category: path_of_the_csv_file }
 PREVIEW_DIR = os.path.join(BASEDIR, "previews")  # style preview thumbnails
 
-PH_RE = r"\{prompt(_[A-Za-z0-9-]+|\d*)\}"          # placeholder in the template
+# placeholder: group1 = name (_Name / number / empty) ; group2 = "=opt1|opt2" (optional)
+PH_RE = r"\{prompt(_[A-Za-z0-9-]+|\d*)(=[^}]*)?\}"
 TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
 
 def default_folder():
@@ -105,30 +112,45 @@ def display_label(key):
     # a hyphen in the placeholder name is shown as a space in the field label
     return "prompt" if key == "_" else key.replace("-", " ")
 
-def placeholders(tpl):
-    seen = []
-    for m in re.finditer(PH_RE, tpl or ""):
-        key = _key_from_raw(m.group(1))
-        if key not in seen:
-            seen.append(key)
-    return seen
+def _split_opts(opts_raw):
+    # opts_raw = "=a|b|c" -> ["a","b","c"]
+    return [o.strip() for o in opts_raw[1:].split("|")]
 
-def get_keys(cat, name):
+def analyze(pos, neg=""):
+    """Return (ordered text_keys, choice_vars {key: master options})."""
+    seen_text, choice_vars = [], {}
+    for tpl in (pos, neg):
+        for m in re.finditer(PH_RE, tpl or ""):
+            key = _key_from_raw(m.group(1))
+            opts = m.group(2)
+            if opts is not None:
+                if key not in choice_vars:
+                    choice_vars[key] = _split_opts(opts)     # first occurrence = master
+            elif key not in seen_text:
+                seen_text.append(key)
+    text_keys = [k for k in seen_text if k not in choice_vars]
+    return text_keys, choice_vars
+
+def analyze_style(cat, name):
     s = STYLES.get(cat, {}).get(name)
     if not s:
-        return []
-    keys = placeholders(s["pos"])
-    for k in placeholders(s["neg"]):
-        if k not in keys:
-            keys.append(k)
-    return keys
+        return [], {}
+    return analyze(s["pos"], s["neg"])
 
-def fill(tpl, vals):
+def fill(tpl, text_vals, choice_index):
     if not tpl:
         return ""
     def repl(m):
-        v = vals.get(_key_from_raw(m.group(1)), "")
-        return v if v.strip() else ""          # empty field -> placeholder removed (optional)
+        key = _key_from_raw(m.group(1))
+        opts = m.group(2)
+        if opts is not None:                       # choice variable: use the index
+            options = _split_opts(opts)
+            idx = choice_index.get(key, 0)
+            return options[idx] if 0 <= idx < len(options) else ""
+        if key in choice_index:                    # bare occurrence of a variable
+            return ""
+        v = text_vals.get(key, "")                 # text field
+        return v if v.strip() else ""
     out = re.sub(PH_RE, repl, tpl)
     out = re.sub(r"[ \t]{2,}", " ", out)            # collapse extra spaces
     out = re.sub(r"\s+([,.;])", r"\1", out)          # no space before , . ;
@@ -137,24 +159,57 @@ def fill(tpl, vals):
     out = re.sub(r"[\s,;]+$", "", out)               # trim trailing punctuation/space
     return out.strip()
 
-def vals_from_fields(keys, field_vals):
-    vals = {}
-    for i, k in enumerate(keys):
-        if i < len(field_vals):
-            v = (field_vals[i] or "").strip()
-            if v:
-                vals[k] = v
-    return vals
-
-def build_result(cat, style, *field_vals):
+def _collect(cat, style, vals):
+    """From (cat, style, control values) build text_vals and choice_index."""
     s = STYLES.get(cat, {}).get(style)
     if not s:
+        return None, {}, {}
+    text_list = vals[:MAXF]
+    choice_list = vals[MAXF:MAXF + MAXV]
+    text_keys, choice_vars = analyze(s["pos"], s["neg"])
+    text_vals = {}
+    for i, k in enumerate(text_keys):
+        if i < len(text_list):
+            v = (text_list[i] or "").strip()
+            if v:
+                text_vals[k] = v
+    choice_index = {}
+    for i, k in enumerate(choice_vars.keys()):
+        opts = choice_vars[k]
+        label = choice_list[i] if i < len(choice_list) else None
+        choice_index[k] = opts.index(label) if (label in opts) else 0
+    return s, text_vals, choice_index
+
+def build_result(cat, style, *vals):
+    s, text_vals, choice_index = _collect(cat, style, vals)
+    if not s:
         return ""
-    return fill(s["pos"], vals_from_fields(get_keys(cat, style), field_vals))
+    return fill(s["pos"], text_vals, choice_index)
+
+def default_result(cat, name):
+    return build_result(cat, name, *([""] * MAXF + [None] * MAXV))
+
+def control_updates(cat, name):
+    """Updates for the pool of text boxes (MAXF) + choice menus (MAXV)."""
+    text_keys, choice_vars = analyze_style(cat, name)
+    ups = []
+    for i in range(MAXF):
+        if i < len(text_keys):
+            ups.append(gr.update(visible=True, label=display_label(text_keys[i]), value=""))
+        else:
+            ups.append(gr.update(visible=False, value=""))
+    ckeys = list(choice_vars.keys())
+    for i in range(MAXV):
+        if i < len(ckeys):
+            opts = choice_vars[ckeys[i]]
+            ups.append(gr.update(visible=True, label=display_label(ckeys[i]),
+                                 choices=opts, value=(opts[0] if opts else None)))
+        else:
+            ups.append(gr.update(visible=False, choices=[], value=None))
+    return ups
 
 def translate_text(text, target="en"):
-    """Translate text (auto -> target) via the free Google Translate endpoint.
-    Auto-detects the source language, so text already in the target language is left unchanged."""
+    """Translate text (auto -> target) via the free Google Translate endpoint."""
     text = (text or "").strip()
     if not text:
         return text
@@ -193,18 +248,6 @@ def js_set_prompt(elem_id):
         "}" % (elem_id, elem_id)
     )
 
-def field_updates(cat, name):
-    """Show/label the fields based on the placeholders of the chosen style."""
-    keys = get_keys(cat, name)
-    ups = []
-    for i in range(MAXF):
-        if i < len(keys):
-            k = keys[i]
-            ups.append(gr.update(visible=True, label=display_label(k), value=""))
-        else:
-            ups.append(gr.update(visible=False, value=""))
-    return ups
-
 # ------------------------------------------------------------------ save style
 def save_style(folder, cat, name, pos, neg):
     """Save (or update by name) a style into a .csv file. Returns (ok, message)."""
@@ -221,7 +264,6 @@ def save_style(folder, cat, name, pos, neg):
         fn = cat if cat.lower().endswith(".csv") else (cat + ".csv")
         path = os.path.join(folder, fn)
 
-    # read existing content
     rows = []
     if os.path.isfile(path):
         try:
@@ -239,7 +281,6 @@ def save_style(folder, cat, name, pos, neg):
             start = 1
     data = rows[start:]
 
-    # update if the name exists, otherwise append
     updated = False
     for r in data:
         if r and (r[0] or "").strip() == name:
@@ -252,7 +293,6 @@ def save_style(folder, cat, name, pos, neg):
     if not updated:
         data.append([name, pos, neg])
 
-    # safety backup before rewriting
     try:
         if os.path.isfile(path):
             shutil.copy2(path, path + ".bak")
@@ -368,72 +408,86 @@ class ExtendedStyles(scripts.Script):
                                  columns=4, height="auto", object_fit="cover", allow_preview=False,
                                  elem_id=gal_id)
             slider_id = "es_size_slider_i2i" if is_img2img else "es_size_slider_t2i"
-            # the slider is handled entirely client-side (javascript/extended_styles.js):
-            # it applies and remembers the size via localStorage, without going through the
-            # server (so it does not conflict with Forge's ui-config).
+            # the slider is handled client-side (javascript/extended_styles.js) via localStorage
             gr.Slider(minimum=50, maximum=200, value=150, step=5,
                       label="Thumbnail size (px)", elem_id=slider_id)
 
-            gr.Markdown("Fill in the fields below: the **final prompt** is built and used at generation "
-                        "(you can leave the main prompt box empty).")
+            gr.Markdown("Fill in the fields and menus below: the **final prompt** is built and used at "
+                        "generation (you can leave the main prompt box empty).")
 
+            init_text_keys, init_choice_vars = analyze_style(c0, s0)
+
+            # pool of text boxes
             fields = []
-            init_keys = get_keys(c0, s0)
             for i in range(MAXF):
-                if i < len(init_keys):
-                    k = init_keys[i]
-                    fields.append(gr.Textbox(label=display_label(k), visible=True, value=""))
+                if i < len(init_text_keys):
+                    fields.append(gr.Textbox(label=display_label(init_text_keys[i]), visible=True, value=""))
                 else:
                     fields.append(gr.Textbox(label="", visible=False, value=""))
+
+            # pool of dropdowns (choice variables)
+            choices = []
+            ckeys0 = list(init_choice_vars.keys())
+            for i in range(MAXV):
+                if i < len(ckeys0):
+                    opts = init_choice_vars[ckeys0[i]]
+                    choices.append(gr.Dropdown(label=display_label(ckeys0[i]), choices=opts,
+                                               value=(opts[0] if opts else None), visible=True))
+                else:
+                    choices.append(gr.Dropdown(label="", choices=[], value=None, visible=False))
+
+            ctrls = fields + choices   # order: text (MAXF) then menus (MAXV)
 
             with gr.Row():
                 tr_btn = gr.Button("Translate fields to English")
                 write_btn = gr.Button("Write to main prompt", variant="primary")
             tr_status = gr.Markdown("")
 
-            # hidden preview: only used as the source for "Write to main prompt"
-            result = gr.Textbox(value=build_result(c0, s0), visible=False)
+            # hidden preview: source for "Write to main prompt"
+            result = gr.Textbox(value=default_result(c0, s0), visible=False)
 
             write_btn.click(None, inputs=[result], outputs=[],
                             _js=js_set_prompt("img2img_prompt" if is_img2img else "txt2img_prompt"))
 
-            # translate the filled fields (auto -> English)
-            def on_translate(c, s, *fvals):
-                keys = get_keys(c, s)
-                out = [(fvals[i] if i < len(fvals) else "") for i in range(MAXF)]
-                idxs = [i for i in range(MAXF) if i < len(keys) and (out[i] or "").strip()]
+            # translate only the text boxes (menus are not translated)
+            def on_translate(c, s, *vals):
+                text_list = list(vals[:MAXF])
+                choice_list = list(vals[MAXF:MAXF + MAXV])
+                text_keys, _ = analyze_style(c, s)
+                idxs = [i for i in range(MAXF) if i < len(text_keys) and (text_list[i] or "").strip()]
                 msg = "Nothing to translate." if not idxs else "Translated to English."
                 if idxs:
                     try:
-                        translated = translate_many([out[i] for i in idxs])
+                        translated = translate_many([text_list[i] for i in idxs])
                         for j, i in enumerate(idxs):
-                            out[i] = translated[j]
+                            text_list[i] = translated[j]
                     except Exception:
                         msg = "Translation failed (connection?)."
-                return [gr.update(value=o) for o in out] + [build_result(c, s, *out), msg]
-            tr_btn.click(on_translate, inputs=[cat, style] + fields,
+                new_result = build_result(c, s, *(text_list + choice_list))
+                return [gr.update(value=o) for o in text_list] + [new_result, msg]
+            tr_btn.click(on_translate, inputs=[cat, style] + ctrls,
                          outputs=fields + [result, tr_status])
 
-            # category change -> update template list, fields, preview and gallery
+            # category change -> template, controls, preview and gallery
             def on_cat(c):
                 ch = style_choices(c)
                 ns = ch[0] if ch else None
-                return ([gr.update(choices=ch, value=ns)] + field_updates(c, ns)
-                        + [build_result(c, ns), gallery_items(c)])
-            cat.change(on_cat, inputs=[cat], outputs=[style] + fields + [result, gallery])
+                return ([gr.update(choices=ch, value=ns)] + control_updates(c, ns)
+                        + [default_result(c, ns), gallery_items(c)])
+            cat.change(on_cat, inputs=[cat], outputs=[style] + ctrls + [result, gallery])
 
             def on_style(c, s):
-                return field_updates(c, s) + [build_result(c, s)]
-            style.change(on_style, inputs=[cat, style], outputs=fields + [result])
+                return control_updates(c, s) + [default_result(c, s)]
+            style.change(on_style, inputs=[cat, style], outputs=ctrls + [result])
 
             # click on a thumbnail -> select that style
             def on_gallery_select(c, evt: gr.SelectData):
                 ch = style_choices(c)
                 if evt.index is None or evt.index >= len(ch):
-                    return [gr.update()] + [gr.update() for _ in range(MAXF)] + [gr.update()]
+                    return [gr.update()] + [gr.update() for _ in range(MAXF + MAXV)] + [gr.update()]
                 s = ch[evt.index]
-                return [gr.update(value=s)] + field_updates(c, s) + [build_result(c, s)]
-            gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + fields + [result])
+                return [gr.update(value=s)] + control_updates(c, s) + [default_result(c, s)]
+            gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + ctrls + [result])
 
             def on_reload(f):
                 save_folder(f)
@@ -443,12 +497,12 @@ class ExtendedStyles(scripts.Script):
                 ch = style_choices(nc)
                 ns = ch[0] if ch else None
                 return ([gr.update(choices=cs, value=nc), gr.update(choices=ch, value=ns)]
-                        + field_updates(nc, ns) + [build_result(nc, ns), gallery_items(nc)])
-            reload_btn.click(on_reload, inputs=[folder], outputs=[cat, style] + fields + [result, gallery])
+                        + control_updates(nc, ns) + [default_result(nc, ns), gallery_items(nc)])
+            reload_btn.click(on_reload, inputs=[folder], outputs=[cat, style] + ctrls + [result, gallery])
 
-            # live update of the final prompt while typing in the fields
-            for tb in fields:
-                tb.change(build_result, inputs=[cat, style] + fields, outputs=[result])
+            # live update of the final prompt while filling in
+            for comp in ctrls:
+                comp.change(build_result, inputs=[cat, style] + ctrls, outputs=[result])
 
             # ---------------------------------------------------------- set style preview
             with gr.Accordion("Set style preview", open=False):
@@ -500,7 +554,8 @@ class ExtendedStyles(scripts.Script):
             with gr.Accordion("Create / edit style", open=False):
                 gr.Markdown("Pick a **category** and the **style to edit**: the fields below fill in "
                             "automatically. To create a new one, press **New** and type. "
-                            "If the name already exists in the chosen file it is **updated**; otherwise it is added "
+                            "Choice variables: `{prompt_Gender=Male|Female}` (later occurrences with the "
+                            "same name follow the index). If the name already exists it is **updated** "
                             "(a `.bak` backup is made before writing).")
                 with gr.Row():
                     edit_cat = gr.Dropdown(choices=cats, value=c0, label="Category to edit")
@@ -508,14 +563,13 @@ class ExtendedStyles(scripts.Script):
                 save_file = gr.Dropdown(choices=cats, value=c0, label="Save to file")
                 save_name = gr.Textbox(label="Style name", placeholder="e.g. Girl with flower")
                 save_pos = gr.Textbox(label="Prompt", lines=3,
-                                      placeholder="a girl {prompt_face} holding the {prompt_flowercolor} flower...")
+                                      placeholder="a girl {prompt_face} with {prompt_Gender=he|she}...")
                 save_neg = gr.Textbox(label="Negative prompt (optional)", lines=2)
                 with gr.Row():
                     new_btn = gr.Button("New (clear the fields)")
                     save_btn = gr.Button("Save style", variant="primary")
                 save_status = gr.Markdown("")
 
-                # selecting a style loads it into the edit fields
                 def load_for_edit(c, s):
                     st = STYLES.get(c, {}).get(s)
                     if not st:
@@ -531,12 +585,10 @@ class ExtendedStyles(scripts.Script):
                 edit_style.change(load_for_edit, inputs=[edit_cat, edit_style],
                                   outputs=[save_file, save_name, save_pos, save_neg])
 
-                # new style: clear name/prompt/negative (keeps the chosen file)
                 def on_new():
                     return gr.update(value=""), gr.update(value=""), gr.update(value="")
                 new_btn.click(on_new, outputs=[save_name, save_pos, save_neg])
 
-                # save and refresh all menus
                 def on_save(f, target, name, pos, neg):
                     ok, msg = save_style(f, target, name, pos, neg)
                     scan_styles(f)
@@ -548,41 +600,39 @@ class ExtendedStyles(scripts.Script):
                     return ([prefix + msg,
                              gr.update(choices=cs, value=ncat),
                              gr.update(choices=style_choices(ncat), value=nstyle)]
-                            + field_updates(ncat, nstyle)
-                            + [build_result(ncat, nstyle),
+                            + control_updates(ncat, nstyle)
+                            + [default_result(ncat, nstyle),
                                gr.update(choices=cs, value=(target if target in cs else ncat)),
                                gr.update(choices=cs, value=ncat),
                                gr.update(choices=style_choices(ncat), value=nstyle),
                                gallery_items(ncat)])
                 save_btn.click(on_save, inputs=[folder, save_file, save_name, save_pos, save_neg],
-                               outputs=[save_status, cat, style] + fields
+                               outputs=[save_status, cat, style] + ctrls
                                        + [result, save_file, edit_cat, edit_style, gallery])
 
-        return [enabled, cat, style] + fields
+        return [enabled, cat, style] + ctrls
 
-    def process(self, p, enabled, cat, style, *field_vals):
+    def process(self, p, enabled, cat, style, *vals):
         if not enabled or not style:
             return
-        s = STYLES.get(cat, {}).get(style)
+        s, text_vals, choice_index = _collect(cat, style, vals)
         if not s:
             return
 
-        keys = get_keys(cat, style)
-        vals = vals_from_fields(keys, field_vals)
-        # fallback: any <name: value> typed by hand in the prompt box
+        # fallback: any <name: value> typed by hand in the prompt box (text fields only)
         for m in re.finditer(TAG_RE, p.prompt or ""):
             k = m.group(1)
             if k.lower() == "prompt":
                 k = "_"
-            vals.setdefault(k, m.group(2).strip())
+            text_vals.setdefault(k, m.group(2).strip())
 
-        new_pos = fill(s["pos"], vals)
+        new_pos = fill(s["pos"], text_vals, choice_index)
         p.prompt = new_pos
         if getattr(p, "all_prompts", None):
             p.all_prompts = [new_pos for _ in p.all_prompts]
 
         if s.get("neg"):
-            filled_neg = fill(s["neg"], vals)
+            filled_neg = fill(s["neg"], text_vals, choice_index)
             base_neg = (p.negative_prompt or "").strip()
             new_neg = (base_neg + (", " if base_neg and filled_neg else "") + filled_neg).strip()
             p.negative_prompt = new_neg
