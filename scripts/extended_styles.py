@@ -8,8 +8,8 @@
 #
 # Variables: the FIRST occurrence of "_Name=opt1|opt2" creates the dropdown (the options are
 # the labels). Later occurrences with the same _Name use the CHOSEN INDEX and insert their own
-# option at the same position (commas inside an option go straight into the prompt). Index out of
-# range -> empty.
+# option at the same position (commas inside an option go into the prompt). Index out of range -> empty.
+# Controls render in the order the placeholders appear in the prompt (text fields and menus interleaved).
 #
 # You fill the values INSIDE this panel, so it also works with third-party prompt editors
 # (e.g. prompt-all-in-one): the substitution happens at generation time.
@@ -22,8 +22,7 @@ import shutil
 import gradio as gr
 import modules.scripts as scripts
 
-MAXF = 8  # max number of text fields per style
-MAXV = 6  # max number of choice variables (menus) per style
+MAXSLOTS = 12  # max placeholders per style (each slot = a text box OR a menu)
 
 # ------------------------------------------------------------------ global state
 BASEDIR = scripts.basedir()
@@ -117,19 +116,20 @@ def _split_opts(opts_raw):
     return [o.strip() for o in opts_raw[1:].split("|")]
 
 def analyze(pos, neg=""):
-    """Return (ordered text_keys, choice_vars {key: master options})."""
-    seen_text, choice_vars = [], {}
+    """Return (order, choice_vars). order = [(kind, key)] of the unique placeholders IN PROMPT ORDER
+    (kind = 'text' or 'choice'). choice_vars = {key: master options}."""
+    order, seen, choice_vars = [], set(), {}
     for tpl in (pos, neg):
         for m in re.finditer(PH_RE, tpl or ""):
             key = _key_from_raw(m.group(1))
             opts = m.group(2)
-            if opts is not None:
-                if key not in choice_vars:
-                    choice_vars[key] = _split_opts(opts)     # first occurrence = master
-            elif key not in seen_text:
-                seen_text.append(key)
-    text_keys = [k for k in seen_text if k not in choice_vars]
-    return text_keys, choice_vars
+            if opts is not None and key not in choice_vars:
+                choice_vars[key] = _split_opts(opts)     # first occurrence with options = master
+            if key not in seen:
+                seen.add(key)
+                order.append(key)                        # position = first appearance
+    order = [("choice" if k in choice_vars else "text", k) for k in order]
+    return order, choice_vars
 
 def analyze_style(cat, name):
     s = STYLES.get(cat, {}).get(name)
@@ -160,24 +160,26 @@ def fill(tpl, text_vals, choice_index):
     return out.strip()
 
 def _collect(cat, style, vals):
-    """From (cat, style, control values) build text_vals and choice_index."""
+    """From (cat, style, control values) build text_vals and choice_index.
+    vals = [textboxes...MAXSLOTS] + [menus...MAXSLOTS]; slot i uses its textbox or its menu."""
     s = STYLES.get(cat, {}).get(style)
     if not s:
         return None, {}, {}
-    text_list = vals[:MAXF]
-    choice_list = vals[MAXF:MAXF + MAXV]
-    text_keys, choice_vars = analyze(s["pos"], s["neg"])
-    text_vals = {}
-    for i, k in enumerate(text_keys):
-        if i < len(text_list):
+    text_list = vals[:MAXSLOTS]
+    choice_list = vals[MAXSLOTS:2 * MAXSLOTS]
+    order, choice_vars = analyze(s["pos"], s["neg"])
+    text_vals, choice_index = {}, {}
+    for i, (kind, key) in enumerate(order):
+        if i >= MAXSLOTS:
+            break
+        if kind == "text":
             v = (text_list[i] or "").strip()
             if v:
-                text_vals[k] = v
-    choice_index = {}
-    for i, k in enumerate(choice_vars.keys()):
-        opts = choice_vars[k]
-        label = choice_list[i] if i < len(choice_list) else None
-        choice_index[k] = opts.index(label) if (label in opts) else 0
+                text_vals[key] = v
+        else:
+            opts = choice_vars[key]
+            label = choice_list[i] if i < len(choice_list) else None
+            choice_index[key] = opts.index(label) if (label in opts) else 0
     return s, text_vals, choice_index
 
 def build_result(cat, style, *vals):
@@ -187,26 +189,28 @@ def build_result(cat, style, *vals):
     return fill(s["pos"], text_vals, choice_index)
 
 def default_result(cat, name):
-    return build_result(cat, name, *([""] * MAXF + [None] * MAXV))
+    return build_result(cat, name, *([""] * MAXSLOTS + [None] * MAXSLOTS))
 
 def control_updates(cat, name):
-    """Updates for the pool of text boxes (MAXF) + choice menus (MAXV)."""
-    text_keys, choice_vars = analyze_style(cat, name)
-    ups = []
-    for i in range(MAXF):
-        if i < len(text_keys):
-            ups.append(gr.update(visible=True, label=display_label(text_keys[i]), value=""))
+    """Per-slot updates: textbox (MAXSLOTS) + menu (MAXSLOTS). Each slot shows the right control
+    (textbox if text, menu if variable), preserving the placeholder order in the prompt."""
+    order, choice_vars = analyze_style(cat, name)
+    text_ups, drop_ups = [], []
+    for i in range(MAXSLOTS):
+        if i < len(order):
+            kind, key = order[i]
+            if kind == "text":
+                text_ups.append(gr.update(visible=True, label=display_label(key), value=""))
+                drop_ups.append(gr.update(visible=False, choices=[], value=None))
+            else:
+                opts = choice_vars[key]
+                text_ups.append(gr.update(visible=False, value=""))
+                drop_ups.append(gr.update(visible=True, label=display_label(key),
+                                          choices=opts, value=(opts[0] if opts else None)))
         else:
-            ups.append(gr.update(visible=False, value=""))
-    ckeys = list(choice_vars.keys())
-    for i in range(MAXV):
-        if i < len(ckeys):
-            opts = choice_vars[ckeys[i]]
-            ups.append(gr.update(visible=True, label=display_label(ckeys[i]),
-                                 choices=opts, value=(opts[0] if opts else None)))
-        else:
-            ups.append(gr.update(visible=False, choices=[], value=None))
-    return ups
+            text_ups.append(gr.update(visible=False, value=""))
+            drop_ups.append(gr.update(visible=False, choices=[], value=None))
+    return text_ups + drop_ups
 
 def translate_text(text, target="en"):
     """Translate text (auto -> target) via the free Google Translate endpoint."""
@@ -248,7 +252,7 @@ def js_set_prompt(elem_id):
         "}" % (elem_id, elem_id)
     )
 
-# ------------------------------------------------------------------ save style
+# ------------------------------------------------------------------ save / delete style
 def save_style(folder, cat, name, pos, neg):
     """Save (or update by name) a style into a .csv file. Returns (ok, message)."""
     name = (name or "").strip()
@@ -310,6 +314,47 @@ def save_style(folder, cat, name, pos, neg):
 
     verb = "updated" if updated else "saved"
     return True, "Style \"%s\" %s in %s" % (name, verb, os.path.basename(path))
+
+def delete_style(folder, cat, name):
+    """Delete a style (by name) from a .csv file. Returns (ok, message). Makes a .bak backup."""
+    name = (name or "").strip()
+    if not name:
+        return False, "Error: no style selected."
+    path = FILES.get(cat)
+    if not path or not os.path.isfile(path):
+        return False, "Error: file not found."
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+    except Exception as e:
+        return False, "Error reading file: %s" % e
+
+    start = 0
+    header = ["name", "prompt", "negative_prompt"]
+    if rows:
+        h = [c.strip().lower() for c in rows[0]]
+        if h and h[0] == "name" and len(h) > 1 and h[1].startswith("prompt"):
+            header = rows[0]
+            start = 1
+    data = rows[start:]
+    new_data = [r for r in data if not (r and (r[0] or "").strip() == name)]
+    if len(new_data) == len(data):
+        return False, "Style \"%s\" not found." % name
+
+    try:
+        shutil.copy2(path, path + ".bak")
+    except Exception:
+        pass
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            for r in new_data:
+                w.writerow(r)
+    except Exception as e:
+        return False, "Error writing file: %s" % e
+
+    return True, "Style \"%s\" deleted from %s" % (name, os.path.basename(path))
 
 # ------------------------------------------------------------------ previews (thumbnails)
 def _safe(s):
@@ -412,31 +457,33 @@ class ExtendedStyles(scripts.Script):
             gr.Slider(minimum=50, maximum=200, value=150, step=5,
                       label="Thumbnail size (px)", elem_id=slider_id)
 
+            nsfw_id = "es_nsfw_i2i" if is_img2img else "es_nsfw_t2i"
+            gr.Checkbox(value=False, label="Blur NSFW previews (styles with \"NSFW\" in the name)",
+                        elem_id=nsfw_id)   # handled client-side (javascript/extended_styles.js)
+
             gr.Markdown("Fill in the fields and menus below: the **final prompt** is built and used at "
                         "generation (you can leave the main prompt box empty).")
 
-            init_text_keys, init_choice_vars = analyze_style(c0, s0)
+            init_order, init_choice_vars = analyze_style(c0, s0)
 
-            # pool of text boxes
-            fields = []
-            for i in range(MAXF):
-                if i < len(init_text_keys):
-                    fields.append(gr.Textbox(label=display_label(init_text_keys[i]), visible=True, value=""))
-                else:
+            # one "slot" per position: a textbox + a menu, created together; only one is shown.
+            # This way the visual order matches the placeholder order in the prompt.
+            fields, choices = [], []
+            for i in range(MAXSLOTS):
+                kind, key = init_order[i] if i < len(init_order) else (None, None)
+                if kind == "text":
+                    fields.append(gr.Textbox(label=display_label(key), visible=True, value=""))
+                    choices.append(gr.Dropdown(label="", choices=[], value=None, visible=False))
+                elif kind == "choice":
+                    opts = init_choice_vars[key]
                     fields.append(gr.Textbox(label="", visible=False, value=""))
-
-            # pool of dropdowns (choice variables)
-            choices = []
-            ckeys0 = list(init_choice_vars.keys())
-            for i in range(MAXV):
-                if i < len(ckeys0):
-                    opts = init_choice_vars[ckeys0[i]]
-                    choices.append(gr.Dropdown(label=display_label(ckeys0[i]), choices=opts,
+                    choices.append(gr.Dropdown(label=display_label(key), choices=opts,
                                                value=(opts[0] if opts else None), visible=True))
                 else:
+                    fields.append(gr.Textbox(label="", visible=False, value=""))
                     choices.append(gr.Dropdown(label="", choices=[], value=None, visible=False))
 
-            ctrls = fields + choices   # order: text (MAXF) then menus (MAXV)
+            ctrls = fields + choices   # inputs/outputs: all textboxes first, then all menus
 
             with gr.Row():
                 tr_btn = gr.Button("Translate fields to English")
@@ -451,10 +498,11 @@ class ExtendedStyles(scripts.Script):
 
             # translate only the text boxes (menus are not translated)
             def on_translate(c, s, *vals):
-                text_list = list(vals[:MAXF])
-                choice_list = list(vals[MAXF:MAXF + MAXV])
-                text_keys, _ = analyze_style(c, s)
-                idxs = [i for i in range(MAXF) if i < len(text_keys) and (text_list[i] or "").strip()]
+                text_list = list(vals[:MAXSLOTS])
+                choice_list = list(vals[MAXSLOTS:2 * MAXSLOTS])
+                order, _ = analyze_style(c, s)
+                text_slots = [i for i in range(min(len(order), MAXSLOTS)) if order[i][0] == "text"]
+                idxs = [i for i in text_slots if (text_list[i] or "").strip()]
                 msg = "Nothing to translate." if not idxs else "Translated to English."
                 if idxs:
                     try:
@@ -484,7 +532,7 @@ class ExtendedStyles(scripts.Script):
             def on_gallery_select(c, evt: gr.SelectData):
                 ch = style_choices(c)
                 if evt.index is None or evt.index >= len(ch):
-                    return [gr.update()] + [gr.update() for _ in range(MAXF + MAXV)] + [gr.update()]
+                    return [gr.update()] + [gr.update() for _ in range(2 * MAXSLOTS)] + [gr.update()]
                 s = ch[evt.index]
                 return [gr.update(value=s)] + control_updates(c, s) + [default_result(c, s)]
             gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + ctrls + [result])
@@ -555,7 +603,8 @@ class ExtendedStyles(scripts.Script):
                 gr.Markdown("Pick a **category** and the **style to edit**: the fields below fill in "
                             "automatically. To create a new one, press **New** and type. "
                             "Choice variables: `{prompt_Gender=Male|Female}` (later occurrences with the "
-                            "same name follow the index). If the name already exists it is **updated** "
+                            "same name follow the index). If the name exists it is **updated**; "
+                            "**Delete style** removes the one selected in \"Style to edit\" "
                             "(a `.bak` backup is made before writing).")
                 with gr.Row():
                     edit_cat = gr.Dropdown(choices=cats, value=c0, label="Category to edit")
@@ -568,6 +617,7 @@ class ExtendedStyles(scripts.Script):
                 with gr.Row():
                     new_btn = gr.Button("New (clear the fields)")
                     save_btn = gr.Button("Save style", variant="primary")
+                    delete_btn = gr.Button("Delete style")
                 save_status = gr.Markdown("")
 
                 def load_for_edit(c, s):
@@ -609,6 +659,33 @@ class ExtendedStyles(scripts.Script):
                 save_btn.click(on_save, inputs=[folder, save_file, save_name, save_pos, save_neg],
                                outputs=[save_status, cat, style] + ctrls
                                        + [result, save_file, edit_cat, edit_style, gallery])
+
+                # delete the style selected in "Style to edit" (with confirmation)
+                def on_delete(f, ecat, ename):
+                    ok, msg = delete_style(f, ecat, ename)
+                    scan_styles(f)
+                    cs = list(STYLES.keys())
+                    ncat = ecat if ecat in STYLES else (cs[0] if cs else None)
+                    nstyle = style_choices(ncat)[0] if style_choices(ncat) else None
+                    st = STYLES.get(ncat, {}).get(nstyle) or {"pos": "", "neg": ""}
+                    prefix = "OK: " if ok else ""
+                    return ([prefix + msg,
+                             gr.update(choices=cs, value=ncat),
+                             gr.update(choices=style_choices(ncat), value=nstyle)]
+                            + control_updates(ncat, nstyle)
+                            + [default_result(ncat, nstyle),
+                               gr.update(choices=cs, value=ncat),                     # save_file
+                               gr.update(value=(nstyle or "")),                        # save_name
+                               gr.update(value=st["pos"]),                             # save_pos
+                               gr.update(value=st["neg"]),                             # save_neg
+                               gr.update(choices=cs, value=ncat),                      # edit_cat
+                               gr.update(choices=style_choices(ncat), value=nstyle),   # edit_style
+                               gallery_items(ncat)])
+                delete_btn.click(on_delete, inputs=[folder, edit_cat, edit_style],
+                                 outputs=[save_status, cat, style] + ctrls
+                                         + [result, save_file, save_name, save_pos, save_neg,
+                                            edit_cat, edit_style, gallery],
+                                 _js="(f,c,s)=>{ return (s && confirm('Delete style: '+s+' ?')) ? [f,c,s] : [f,c,'']; }")
 
         return [enabled, cat, style] + ctrls
 

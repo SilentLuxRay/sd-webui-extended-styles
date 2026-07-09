@@ -16,7 +16,10 @@ many different results without rewriting it every time.
 - **Auto‑generated fields** — pick a style and one labeled input appears per placeholder.
 - **Choice variables** — `{prompt_Gender=Male|Female}` becomes a dropdown; later placeholders with the
   same name follow the chosen option by index, so one menu drives several coordinated substitutions.
-  Multiple independent variables per style are supported.
+  Multiple independent variables per style are supported. Controls appear in the same order as the
+  placeholders in the prompt (text fields and menus interleaved).
+- **NSFW preview filter** — a toggle that blurs the carousel thumbnails of styles whose name contains
+  "NSFW" (case-insensitive); hover a thumbnail to peek. Remembered per browser.
 - **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
   last generated image with one click, or by dropping an image. A slider resizes the thumbnails and the
   size is remembered (per browser).
@@ -62,8 +65,9 @@ many different results without rewriting it every time.
 
 Open **Create / edit style**, then pick the **Category** and **Style to edit** — the name, prompt and
 negative fields fill in automatically. Change what you want and press **Save style** (same name → updates
-it in place; a new name → adds it). Press **New** to clear the fields and start from scratch. A `.bak`
-backup of the CSV is made before every save.
+it in place; a new name → adds it). Press **New** to clear the fields and start from scratch, or
+**Delete style** to remove the one selected in *Style to edit* (with a confirmation). A `.bak`
+backup of the CSV is made before every save or delete.
 
 ### Style previews
 
@@ -149,6 +153,12 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v2.1.0
+- **Placeholder order** — controls now render in the order the placeholders appear in the prompt
+  (text fields and choice menus interleaved), instead of variables always last.
+- **Delete style** — a button to remove the selected style from its CSV, with confirmation and backup.
+- **NSFW preview filter** — toggle to blur thumbnails of styles with "NSFW" in the name; hover to peek.
 
 ### v2.0.0
 - **Choice variables** — `{prompt_Name=opt1|opt2}` placeholders become dropdowns; later placeholders
