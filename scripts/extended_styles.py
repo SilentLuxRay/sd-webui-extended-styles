@@ -182,14 +182,15 @@ def _collect(cat, style, vals):
             choice_index[key] = opts.index(label) if (label in opts) else 0
     return s, text_vals, choice_index
 
-def build_result(cat, style, *vals):
+def build_results(cat, style, *vals):
+    """Return (final prompt, final negative) from the control values."""
     s, text_vals, choice_index = _collect(cat, style, vals)
     if not s:
-        return ""
-    return fill(s["pos"], text_vals, choice_index)
+        return "", ""
+    return fill(s["pos"], text_vals, choice_index), fill(s["neg"], text_vals, choice_index)
 
-def default_result(cat, name):
-    return build_result(cat, name, *([""] * MAXSLOTS + [None] * MAXSLOTS))
+def default_results(cat, name):
+    return list(build_results(cat, name, *([""] * MAXSLOTS + [None] * MAXSLOTS)))
 
 def control_updates(cat, name):
     """Per-slot updates: textbox (MAXSLOTS) + menu (MAXSLOTS). Each slot shows the right control
@@ -236,20 +237,24 @@ def translate_many(texts, target="en"):
         return parts
     return [translate_text(t, target) for t in texts]  # fallback
 
-def js_set_prompt(elem_id):
-    """JS that writes text into the native prompt box (and notifies Gradio / prompt-all-in-one)."""
+def js_set_prompts(pos_id, neg_id):
+    """JS: write prompt and negative into the native boxes (notifying Gradio / prompt-all-in-one).
+    The negative is only written when the style has one, so the user's own negative isn't wiped."""
     return (
-        "(s) => {"
+        "(p, n) => {"
         "  const root = (typeof gradioApp !== 'undefined') ? gradioApp() : document;"
-        "  const el = (root.querySelector('#%s textarea') || document.querySelector('#%s textarea'));"
-        "  if (el && typeof s === 'string') {"
-        "    el.value = s;"
-        "    el.dispatchEvent(new Event('input', { bubbles: true }));"
-        "    el.dispatchEvent(new Event('change', { bubbles: true }));"
-        "    el.focus();"
+        "  function setv(id, v) {"
+        "    const el = (root.querySelector('#' + id + ' textarea') || document.querySelector('#' + id + ' textarea'));"
+        "    if (el && typeof v === 'string') {"
+        "      el.value = v;"
+        "      el.dispatchEvent(new Event('input', { bubbles: true }));"
+        "      el.dispatchEvent(new Event('change', { bubbles: true }));"
+        "    }"
         "  }"
+        "  setv('%s', p);"
+        "  if (n && n.length) setv('%s', n);"
         "  return [];"
-        "}" % (elem_id, elem_id)
+        "}" % (pos_id, neg_id)
     )
 
 # ------------------------------------------------------------------ save / delete style
@@ -490,11 +495,14 @@ class ExtendedStyles(scripts.Script):
                 write_btn = gr.Button("Write to main prompt", variant="primary")
             tr_status = gr.Markdown("")
 
-            # hidden preview: source for "Write to main prompt"
-            result = gr.Textbox(value=default_result(c0, s0), visible=False)
+            # hidden previews: sources for "Write to main prompt" (prompt and negative)
+            _r0 = default_results(c0, s0)
+            result = gr.Textbox(value=_r0[0], visible=False)
+            result_neg = gr.Textbox(value=_r0[1], visible=False)
 
-            write_btn.click(None, inputs=[result], outputs=[],
-                            _js=js_set_prompt("img2img_prompt" if is_img2img else "txt2img_prompt"))
+            write_btn.click(None, inputs=[result, result_neg], outputs=[],
+                            _js=js_set_prompts("img2img_prompt" if is_img2img else "txt2img_prompt",
+                                               "img2img_neg_prompt" if is_img2img else "txt2img_neg_prompt"))
 
             # translate only the text boxes (menus are not translated)
             def on_translate(c, s, *vals):
@@ -511,31 +519,32 @@ class ExtendedStyles(scripts.Script):
                             text_list[i] = translated[j]
                     except Exception:
                         msg = "Translation failed (connection?)."
-                new_result = build_result(c, s, *(text_list + choice_list))
-                return [gr.update(value=o) for o in text_list] + [new_result, msg]
+                np_, nn_ = build_results(c, s, *(text_list + choice_list))
+                return [gr.update(value=o) for o in text_list] + [np_, nn_, msg]
             tr_btn.click(on_translate, inputs=[cat, style] + ctrls,
-                         outputs=fields + [result, tr_status])
+                         outputs=fields + [result, result_neg, tr_status])
 
             # category change -> template, controls, preview and gallery
             def on_cat(c):
                 ch = style_choices(c)
                 ns = ch[0] if ch else None
                 return ([gr.update(choices=ch, value=ns)] + control_updates(c, ns)
-                        + [default_result(c, ns), gallery_items(c)])
-            cat.change(on_cat, inputs=[cat], outputs=[style] + ctrls + [result, gallery])
+                        + default_results(c, ns) + [gallery_items(c)])
+            cat.change(on_cat, inputs=[cat], outputs=[style] + ctrls + [result, result_neg, gallery])
 
             def on_style(c, s):
-                return control_updates(c, s) + [default_result(c, s)]
-            style.change(on_style, inputs=[cat, style], outputs=ctrls + [result])
+                return control_updates(c, s) + default_results(c, s)
+            style.change(on_style, inputs=[cat, style], outputs=ctrls + [result, result_neg])
 
             # click on a thumbnail -> select that style
             def on_gallery_select(c, evt: gr.SelectData):
                 ch = style_choices(c)
                 if evt.index is None or evt.index >= len(ch):
-                    return [gr.update()] + [gr.update() for _ in range(2 * MAXSLOTS)] + [gr.update()]
+                    return ([gr.update()] + [gr.update() for _ in range(2 * MAXSLOTS)]
+                            + [gr.update(), gr.update()])
                 s = ch[evt.index]
-                return [gr.update(value=s)] + control_updates(c, s) + [default_result(c, s)]
-            gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + ctrls + [result])
+                return [gr.update(value=s)] + control_updates(c, s) + default_results(c, s)
+            gallery.select(on_gallery_select, inputs=[cat], outputs=[style] + ctrls + [result, result_neg])
 
             def on_reload(f):
                 save_folder(f)
@@ -545,12 +554,13 @@ class ExtendedStyles(scripts.Script):
                 ch = style_choices(nc)
                 ns = ch[0] if ch else None
                 return ([gr.update(choices=cs, value=nc), gr.update(choices=ch, value=ns)]
-                        + control_updates(nc, ns) + [default_result(nc, ns), gallery_items(nc)])
-            reload_btn.click(on_reload, inputs=[folder], outputs=[cat, style] + ctrls + [result, gallery])
+                        + control_updates(nc, ns) + default_results(nc, ns) + [gallery_items(nc)])
+            reload_btn.click(on_reload, inputs=[folder],
+                             outputs=[cat, style] + ctrls + [result, result_neg, gallery])
 
-            # live update of the final prompt while filling in
+            # live update of prompt and negative while filling in
             for comp in ctrls:
-                comp.change(build_result, inputs=[cat, style] + ctrls, outputs=[result])
+                comp.change(build_results, inputs=[cat, style] + ctrls, outputs=[result, result_neg])
 
             # ---------------------------------------------------------- set style preview
             with gr.Accordion("Set style preview", open=False):
@@ -651,14 +661,14 @@ class ExtendedStyles(scripts.Script):
                              gr.update(choices=cs, value=ncat),
                              gr.update(choices=style_choices(ncat), value=nstyle)]
                             + control_updates(ncat, nstyle)
-                            + [default_result(ncat, nstyle),
-                               gr.update(choices=cs, value=(target if target in cs else ncat)),
+                            + default_results(ncat, nstyle)
+                            + [gr.update(choices=cs, value=(target if target in cs else ncat)),
                                gr.update(choices=cs, value=ncat),
                                gr.update(choices=style_choices(ncat), value=nstyle),
                                gallery_items(ncat)])
                 save_btn.click(on_save, inputs=[folder, save_file, save_name, save_pos, save_neg],
                                outputs=[save_status, cat, style] + ctrls
-                                       + [result, save_file, edit_cat, edit_style, gallery])
+                                       + [result, result_neg, save_file, edit_cat, edit_style, gallery])
 
                 # delete the style selected in "Style to edit" (with confirmation)
                 def on_delete(f, ecat, ename):
@@ -673,8 +683,8 @@ class ExtendedStyles(scripts.Script):
                              gr.update(choices=cs, value=ncat),
                              gr.update(choices=style_choices(ncat), value=nstyle)]
                             + control_updates(ncat, nstyle)
-                            + [default_result(ncat, nstyle),
-                               gr.update(choices=cs, value=ncat),                     # save_file
+                            + default_results(ncat, nstyle)
+                            + [gr.update(choices=cs, value=ncat),                     # save_file
                                gr.update(value=(nstyle or "")),                        # save_name
                                gr.update(value=st["pos"]),                             # save_pos
                                gr.update(value=st["neg"]),                             # save_neg
@@ -683,7 +693,7 @@ class ExtendedStyles(scripts.Script):
                                gallery_items(ncat)])
                 delete_btn.click(on_delete, inputs=[folder, edit_cat, edit_style],
                                  outputs=[save_status, cat, style] + ctrls
-                                         + [result, save_file, save_name, save_pos, save_neg,
+                                         + [result, result_neg, save_file, save_name, save_pos, save_neg,
                                             edit_cat, edit_style, gallery],
                                  _js="(f,c,s)=>{ return (s && confirm('Delete style: '+s+' ?')) ? [f,c,s] : [f,c,'']; }")
 

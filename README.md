@@ -31,8 +31,9 @@ many different results without rewriting it every time.
   `{prompt_hair-color}` → label "hair color".
 - **Built‑in translation** — write your values in any language and translate them to English with one
   click (auto‑detects the language; text already in English is left unchanged).
-- **Write to main prompt** — one button drops the assembled prompt into the real prompt box, so
-  *Send to img2img*, PNG info and everything downstream just work.
+- **Write to main prompt** — one button drops the assembled prompt **and negative prompt** into the real
+  boxes, so *Send to img2img*, PNG info and everything downstream just work. (The negative is only
+  written when the style has one, so your own negative isn't wiped.)
 - **Create / edit styles** — pick a style to edit and its fields fill in automatically; saving updates
   the CSV in place (or adds a new one), with a `.bak` backup before writing.
 - **Works alongside prompt editors** like *prompt‑all‑in‑one* — values are filled in this panel and the
@@ -153,6 +154,11 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v2.1.1
+- Fix: **Write to main prompt** now also fills the **negative prompt** box (previously the style's
+  negative was only applied with *Enable extended styles* ticked). Left untouched when the style has
+  no negative.
 
 ### v2.1.0
 - **Placeholder order** — controls now render in the order the placeholders appear in the prompt
