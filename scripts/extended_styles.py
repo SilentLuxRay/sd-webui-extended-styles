@@ -361,6 +361,60 @@ def delete_style(folder, cat, name):
 
     return True, "Style \"%s\" deleted from %s" % (name, os.path.basename(path))
 
+def move_style(folder, cat, name, delta):
+    """Move a style up (delta=-1) or down (delta=+1) by swapping it with the adjacent style
+    (----XXX---- separators stay in place). Returns (ok, message). Makes a .bak backup."""
+    name = (name or "").strip()
+    if not name:
+        return False, "Error: no style selected."
+    path = FILES.get(cat)
+    if not path or not os.path.isfile(path):
+        return False, "Error: file not found."
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+    except Exception as e:
+        return False, "Error reading file: %s" % e
+
+    start = 0
+    header = ["name", "prompt", "negative_prompt"]
+    if rows:
+        h = [c.strip().lower() for c in rows[0]]
+        if h and h[0] == "name" and len(h) > 1 and h[1].startswith("prompt"):
+            header = rows[0]
+            start = 1
+    data = rows[start:]
+
+    # data-indices of the real style rows (no separators, no empty rows)
+    style_idx = [i for i, r in enumerate(data)
+                 if r and (r[0] or "").strip() and not re.match(r"^-{2,}.*-{2,}$", (r[0] or "").strip())]
+    pos = next((j for j, i in enumerate(style_idx) if (data[i][0] or "").strip() == name), None)
+    if pos is None:
+        return False, "Style \"%s\" not found." % name
+    tgt = pos + delta
+    if tgt < 0:
+        return False, "Already at the top."
+    if tgt >= len(style_idx):
+        return False, "Already at the bottom."
+
+    i1, i2 = style_idx[pos], style_idx[tgt]
+    data[i1], data[i2] = data[i2], data[i1]
+
+    try:
+        shutil.copy2(path, path + ".bak")
+    except Exception:
+        pass
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            for r in data:
+                w.writerow(r)
+    except Exception as e:
+        return False, "Error writing file: %s" % e
+
+    return True, "Style \"%s\" moved." % name
+
 # ------------------------------------------------------------------ previews (thumbnails)
 def _safe(s):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", s or "")
@@ -619,6 +673,9 @@ class ExtendedStyles(scripts.Script):
                 with gr.Row():
                     edit_cat = gr.Dropdown(choices=cats, value=c0, label="Category to edit")
                     edit_style = gr.Dropdown(choices=style_choices(c0), value=s0, label="Style to edit")
+                with gr.Row():
+                    up_btn = gr.Button("▲ Move up")
+                    down_btn = gr.Button("▼ Move down")
                 save_file = gr.Dropdown(choices=cats, value=c0, label="Save to file")
                 save_name = gr.Textbox(label="Style name", placeholder="e.g. Girl with flower")
                 save_pos = gr.Textbox(label="Prompt", lines=3,
@@ -696,6 +753,31 @@ class ExtendedStyles(scripts.Script):
                                          + [result, result_neg, save_file, save_name, save_pos, save_neg,
                                             edit_cat, edit_style, gallery],
                                  _js="(f,c,s)=>{ return (s && confirm('Delete style: '+s+' ?')) ? [f,c,s] : [f,c,'']; }")
+
+                # move the selected style up/down (reorders the CSV, keeps the selection)
+                def on_move(f, ecat, ename, delta):
+                    ok, msg = move_style(f, ecat, ename, delta)
+                    scan_styles(f)
+                    cs = list(STYLES.keys())
+                    ncat = ecat if ecat in STYLES else (cs[0] if cs else None)
+                    nstyle = ename if (ncat and ename in STYLES.get(ncat, {})) \
+                             else (style_choices(ncat)[0] if style_choices(ncat) else None)
+                    prefix = "OK: " if ok else ""
+                    return ([prefix + msg,
+                             gr.update(choices=cs, value=ncat),
+                             gr.update(choices=style_choices(ncat), value=nstyle)]
+                            + control_updates(ncat, nstyle)
+                            + default_results(ncat, nstyle)
+                            + [gr.update(choices=cs, value=ncat),                      # save_file
+                               gr.update(choices=cs, value=ncat),                      # edit_cat
+                               gr.update(choices=style_choices(ncat), value=nstyle),   # edit_style
+                               gallery_items(ncat)])
+                _move_outputs = ([save_status, cat, style] + ctrls
+                                 + [result, result_neg, save_file, edit_cat, edit_style, gallery])
+                up_btn.click(lambda f, c, s: on_move(f, c, s, -1),
+                             inputs=[folder, edit_cat, edit_style], outputs=_move_outputs)
+                down_btn.click(lambda f, c, s: on_move(f, c, s, 1),
+                               inputs=[folder, edit_cat, edit_style], outputs=_move_outputs)
 
         return [enabled, cat, style] + ctrls
 

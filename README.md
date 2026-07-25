@@ -67,8 +67,9 @@ many different results without rewriting it every time.
 Open **Create / edit style**, then pick the **Category** and **Style to edit** — the name, prompt and
 negative fields fill in automatically. Change what you want and press **Save style** (same name → updates
 it in place; a new name → adds it). Press **New** to clear the fields and start from scratch, or
-**Delete style** to remove the one selected in *Style to edit* (with a confirmation). A `.bak`
-backup of the CSV is made before every save or delete.
+**Delete style** to remove the one selected in *Style to edit* (with a confirmation). Use **▲ Move up** /
+**▼ Move down** to reorder the selected style in its file (separators stay in place). A `.bak`
+backup of the CSV is made before every save, delete or move.
 
 ### Style previews
 
@@ -154,6 +155,10 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v2.2.0
+- **Reorder styles** — ▲/▼ buttons in the Create/edit panel move the selected style up or down in its
+  CSV file (separators stay put), with a backup.
 
 ### v2.1.1
 - Fix: **Write to main prompt** now also fills the **negative prompt** box (previously the style's
