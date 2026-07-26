@@ -6,10 +6,14 @@
 #   {prompt_face} ...              named (text field)
 #   {prompt_Gender=Male|Female}    choice VARIABLE -> dropdown menu
 #
-# Variables: the FIRST occurrence of "_Name=opt1|opt2" creates the dropdown (the options are
-# the labels). Later occurrences with the same _Name use the CHOSEN INDEX and insert their own
-# option at the same position (commas inside an option go into the prompt). Index out of range -> empty.
-# Controls render in the order the placeholders appear in the prompt (text fields and menus interleaved).
+# Variables: the FIRST occurrence of "_Name=opt1|opt2" creates the dropdown. Later occurrences
+# with the same _Name use the CHOSEN INDEX. Index out of range -> empty.
+#
+# Labels + nesting (v3):
+#   {prompt_Mode=Safe=>a coat {prompt_Color}|Explicit=>}
+#   - "Label=>text": the menu shows "Safe"/"Explicit"; the prompt gets the text right of =>.
+#   - The text may contain NESTED placeholders (e.g. {prompt_Color}), used only when that branch
+#     is selected. (Without "=>", the label equals the text.)
 #
 # You fill the values INSIDE this panel, so it also works with third-party prompt editors
 # (e.g. prompt-all-in-one): the substitution happens at generation time.
@@ -31,8 +35,6 @@ STYLES = {}   # { category: { name: {"pos": str, "neg": str} } }
 FILES = {}    # { category: path_of_the_csv_file }
 PREVIEW_DIR = os.path.join(BASEDIR, "previews")  # style preview thumbnails
 
-# placeholder: group1 = name (_Name / number / empty) ; group2 = "=opt1|opt2" (optional)
-PH_RE = r"\{prompt(_[A-Za-z0-9-]+|\d*)(=[^}]*)?\}"
 TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
 
 def default_folder():
@@ -111,24 +113,78 @@ def display_label(key):
     # a hyphen in the placeholder name is shown as a space in the field label
     return "prompt" if key == "_" else key.replace("-", " ")
 
-def _split_opts(opts_raw):
-    # opts_raw = "=a|b|c" -> ["a","b","c"]
-    return [o.strip() for o in opts_raw[1:].split("|")]
+_NAME_RE = re.compile(r"(_[A-Za-z0-9-]+|\d*)")
+
+def _scan(text):
+    """Top-level {prompt...} placeholders, brace-balanced (handles nesting).
+    Returns a list of (name_raw, opts_raw or None, start, end)."""
+    res, i, n = [], 0, len(text or "")
+    while i < n:
+        if text.startswith("{prompt", i):
+            j = i + 7
+            name_raw = _NAME_RE.match(text, j).group(1)
+            j += len(name_raw)
+            if j < n and text[j] == "=":
+                depth, k = 1, j + 1
+                while k < n:
+                    c = text[k]
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    k += 1
+                res.append((name_raw, text[j + 1:k], i, k + 1))
+                i = k + 1
+                continue
+            if j < n and text[j] == "}":
+                res.append((name_raw, None, i, j + 1))
+                i = j + 1
+                continue
+        i += 1
+    return res
+
+def _split_top(s, sep="|"):
+    """Split on 'sep' only at the top level (respecting nested braces)."""
+    parts, depth, cur = [], 0, ""
+    for c in s:
+        if c == "{":
+            depth += 1; cur += c
+        elif c == "}":
+            depth -= 1; cur += c
+        elif c == sep and depth == 0:
+            parts.append(cur); cur = ""
+        else:
+            cur += c
+    parts.append(cur)
+    return parts
+
+def _label_tmpl(opt):
+    """Option 'Label=>text' -> (label, text). Without '=>': label equals the text."""
+    idx = opt.find("=>")
+    if idx == -1:
+        return opt.strip(), opt.strip()
+    return opt[:idx].strip(), opt[idx + 2:]
 
 def analyze(pos, neg=""):
-    """Return (order, choice_vars). order = [(kind, key)] of the unique placeholders IN PROMPT ORDER
-    (kind = 'text' or 'choice'). choice_vars = {key: master options}."""
+    """Return (order, choice_vars). order = [(kind, key)] of the unique placeholders in prompt order
+    (including the ones NESTED inside options). choice_vars = {key: master labels}."""
     order, seen, choice_vars = [], set(), {}
-    for tpl in (pos, neg):
-        for m in re.finditer(PH_RE, tpl or ""):
-            key = _key_from_raw(m.group(1))
-            opts = m.group(2)
-            if opts is not None and key not in choice_vars:
-                choice_vars[key] = _split_opts(opts)     # first occurrence with options = master
-            if key not in seen:
-                seen.add(key)
-                order.append(key)                        # position = first appearance
-    order = [("choice" if k in choice_vars else "text", k) for k in order]
+    def walk(text):
+        for name_raw, opts_raw, s, e in _scan(text):
+            key = _key_from_raw(name_raw)
+            if opts_raw is not None:
+                lt = [_label_tmpl(o) for o in _split_top(opts_raw)]
+                if key not in choice_vars:
+                    choice_vars[key] = [lab for lab, _ in lt]   # first occurrence = master
+                if key not in seen:
+                    seen.add(key); order.append(("choice", key))
+                for _, tmpl in lt:
+                    walk(tmpl)                                   # nested placeholders
+            elif key not in seen:
+                seen.add(key); order.append(("text", key))
+    walk(pos); walk(neg)
     return order, choice_vars
 
 def analyze_style(cat, name):
@@ -137,21 +193,29 @@ def analyze_style(cat, name):
         return [], {}
     return analyze(s["pos"], s["neg"])
 
+def _render(text, text_vals, choice_index):
+    """Recursive substitution: for choice variables, descend ONLY into the selected branch."""
+    out, last = [], 0
+    for name_raw, opts_raw, s, e in _scan(text):
+        out.append(text[last:s])
+        key = _key_from_raw(name_raw)
+        if opts_raw is not None:                       # choice variable
+            lt = [_label_tmpl(o) for o in _split_top(opts_raw)]
+            idx = choice_index.get(key, 0)
+            if 0 <= idx < len(lt):
+                out.append(_render(lt[idx][1], text_vals, choice_index))
+        elif key not in choice_index:                  # text field
+            v = text_vals.get(key, "")
+            if v.strip():
+                out.append(v)
+        last = e
+    out.append(text[last:])
+    return "".join(out)
+
 def fill(tpl, text_vals, choice_index):
     if not tpl:
         return ""
-    def repl(m):
-        key = _key_from_raw(m.group(1))
-        opts = m.group(2)
-        if opts is not None:                       # choice variable: use the index
-            options = _split_opts(opts)
-            idx = choice_index.get(key, 0)
-            return options[idx] if 0 <= idx < len(options) else ""
-        if key in choice_index:                    # bare occurrence of a variable
-            return ""
-        v = text_vals.get(key, "")                 # text field
-        return v if v.strip() else ""
-    out = re.sub(PH_RE, repl, tpl)
+    out = _render(tpl, text_vals, choice_index)
     out = re.sub(r"[ \t]{2,}", " ", out)            # collapse extra spaces
     out = re.sub(r"\s+([,.;])", r"\1", out)          # no space before , . ;
     out = re.sub(r"([,;])(?:\s*[,;])+", r"\1", out)  # collapse repeated , or ;

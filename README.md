@@ -18,6 +18,10 @@ many different results without rewriting it every time.
   same name follow the chosen option by index, so one menu drives several coordinated substitutions.
   Multiple independent variables per style are supported. Controls appear in the same order as the
   placeholders in the prompt (text fields and menus interleaved).
+- **Branch variables (labels + nesting)** — an option can read `Label=>text`, so the menu shows a clean
+  label (e.g. `Safe` / `Explicit`) while inserting a whole sub‑template. That sub‑template can contain
+  its own **nested placeholders**, so one choice can switch between entirely different pieces of text
+  (and their fields) — e.g. a safe/explicit toggle that adds or removes a clause with its own colour.
 - **NSFW preview filter** — a toggle that blurs the carousel thumbnails of styles whose name contains
   "NSFW" (case-insensitive); hover a thumbnail to peek. Remembered per browser.
 - **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
@@ -115,9 +119,33 @@ a human {prompt_Gender=Male|Female} in a loose shirt revealing his {prompt_Gende
 - Choosing **Male** → "a human Male in a loose shirt revealing his hairy chest"
 - Choosing **Female** → "a human Female in a loose shirt revealing his chest with a pink bra"
 
-You can define **several independent variables** in one style (up to 6), each with its own dropdown.
+You can define **several independent variables** in one style, each with its own dropdown.
 If a linked option list is shorter than the selected index, that spot is left empty. Tip: put fixed
 words that must change with the choice *inside* the options (e.g. `{prompt_Gender=A man|A woman}`).
+
+### Branch variables — labels and nesting
+
+Two extra pieces make choices much more powerful:
+
+- **`Label=>text`** — the part before `=>` is what the **menu shows**; the part after is what goes into
+  the **prompt**. So the menu can read `Safe` / `Explicit` instead of the raw text.
+- **Nesting** — the text after `=>` can contain **other placeholders**. Their fields appear in the
+  panel, and they are only used when that branch is selected.
+
+Put together, one menu can add or remove a whole clause (and its own fields):
+
+```
+a girl,{prompt_Top=Dressed=>wearing a {prompt_ShirtColor} shirt,|Nude=>}on a beach
+```
+
+- The **Top** menu shows `Dressed` / `Nude`.
+- Choose **Dressed** → a **ShirtColor** field is used → `a girl,wearing a red shirt,on a beach`.
+- Choose **Nude** → the whole clause is dropped → `a girl,on a beach`.
+
+Use the **same variable name in several spots** to toggle multiple parts of the prompt with one menu
+(they follow the same choice by index). A branch's `text` can even contain another `{prompt_X=...}`.
+Note: the nested fields stay visible in the panel even when their branch isn't selected — they are
+simply ignored until you pick that branch.
 
 ## CSV format
 
@@ -155,6 +183,12 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v3.0.0
+- **Branch variables** — new templating engine (brace‑aware, recursive). Choice options now support
+  `Label=>text` for readable menu labels, and **nested placeholders** inside options, so one menu can
+  swap between whole sub‑templates with their own fields. Fully backward‑compatible with existing
+  styles. (Nested fields stay visible in the panel until their branch is selected.)
 
 ### v2.2.0
 - **Reorder styles** — ▲/▼ buttons in the Create/edit panel move the selected style up or down in its
