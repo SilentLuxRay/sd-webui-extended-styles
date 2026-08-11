@@ -193,6 +193,22 @@ def analyze_style(cat, name):
         return [], {}
     return analyze(s["pos"], s["neg"])
 
+def active_keys(pos, neg, selections):
+    """Keys currently ACTIVE (visible) given the selections {key: index}: descends only into
+    the selected branches."""
+    active = set()
+    def walk(text):
+        for name_raw, opts_raw, s, e in _scan(text):
+            key = _key_from_raw(name_raw)
+            active.add(key)
+            if opts_raw is not None:
+                lt = [_label_tmpl(o) for o in _split_top(opts_raw)]
+                idx = selections.get(key, 0)
+                if 0 <= idx < len(lt):
+                    walk(lt[idx][1])            # only the selected branch
+    walk(pos or ""); walk(neg or "")
+    return active
+
 def _render(text, text_vals, choice_index):
     """Recursive substitution: for choice variables, descend ONLY into the selected branch."""
     out, last = [], 0
@@ -256,26 +272,62 @@ def build_results(cat, style, *vals):
 def default_results(cat, name):
     return list(build_results(cat, name, *([""] * MAXSLOTS + [None] * MAXSLOTS)))
 
-def control_updates(cat, name):
-    """Per-slot updates: textbox (MAXSLOTS) + menu (MAXSLOTS). Each slot shows the right control
-    (textbox if text, menu if variable), preserving the placeholder order in the prompt."""
+def _active_set(cat, name, selections):
+    s = STYLES.get(cat, {}).get(name)
+    return active_keys(s["pos"], s["neg"], selections) if s else set()
+
+def control_updates(cat, name, selections=None):
+    """FULL per-slot updates (label, choices, value reset) + visibility. A nested field/menu is
+    visible only if its branch is selected (default: first option)."""
     order, choice_vars = analyze_style(cat, name)
+    act = _active_set(cat, name, selections or {})
     text_ups, drop_ups = [], []
     for i in range(MAXSLOTS):
         if i < len(order):
             kind, key = order[i]
+            vis = key in act
             if kind == "text":
-                text_ups.append(gr.update(visible=True, label=display_label(key), value=""))
+                text_ups.append(gr.update(visible=vis, label=display_label(key), value=""))
                 drop_ups.append(gr.update(visible=False, choices=[], value=None))
             else:
                 opts = choice_vars[key]
                 text_ups.append(gr.update(visible=False, value=""))
-                drop_ups.append(gr.update(visible=True, label=display_label(key),
+                drop_ups.append(gr.update(visible=vis, label=display_label(key),
                                           choices=opts, value=(opts[0] if opts else None)))
         else:
             text_ups.append(gr.update(visible=False, value=""))
             drop_ups.append(gr.update(visible=False, choices=[], value=None))
     return text_ups + drop_ups
+
+def visibility_updates(cat, name, selections):
+    """ONLY visibility flags per slot (does not touch values/labels): used when a menu changes,
+    so the values already typed stay in place."""
+    order, _ = analyze_style(cat, name)
+    act = _active_set(cat, name, selections)
+    text_ups, drop_ups = [], []
+    for i in range(MAXSLOTS):
+        kind, key = order[i] if i < len(order) else (None, None)
+        if kind == "text":
+            text_ups.append(gr.update(visible=(key in act))); drop_ups.append(gr.update(visible=False))
+        elif kind == "choice":
+            text_ups.append(gr.update(visible=False)); drop_ups.append(gr.update(visible=(key in act)))
+        else:
+            text_ups.append(gr.update(visible=False)); drop_ups.append(gr.update(visible=False))
+    return text_ups + drop_ups
+
+def _selections_from_vals(cat, name, vals):
+    """Derive {key: index} from the menu values (static slots)."""
+    order, choice_vars = analyze_style(cat, name)
+    choice_list = vals[MAXSLOTS:2 * MAXSLOTS]
+    sel = {}
+    for i, (kind, key) in enumerate(order):
+        if i >= MAXSLOTS:
+            break
+        if kind == "choice":
+            opts = choice_vars[key]
+            label = choice_list[i] if i < len(choice_list) else None
+            sel[key] = opts.index(label) if (label in opts) else 0
+    return sel
 
 def translate_text(text, target="en"):
     """Translate text (auto -> target) via the free Google Translate endpoint."""
@@ -588,20 +640,23 @@ class ExtendedStyles(scripts.Script):
                         "generation (you can leave the main prompt box empty).")
 
             init_order, init_choice_vars = analyze_style(c0, s0)
+            _s0 = STYLES.get(c0, {}).get(s0)
+            init_active = active_keys(_s0["pos"], _s0["neg"], {}) if _s0 else set()
 
             # one "slot" per position: a textbox + a menu, created together; only one is shown.
-            # This way the visual order matches the placeholder order in the prompt.
+            # Nested fields start hidden if their branch is not the default-selected one.
             fields, choices = [], []
             for i in range(MAXSLOTS):
                 kind, key = init_order[i] if i < len(init_order) else (None, None)
+                vis = key in init_active
                 if kind == "text":
-                    fields.append(gr.Textbox(label=display_label(key), visible=True, value=""))
+                    fields.append(gr.Textbox(label=display_label(key), visible=vis, value=""))
                     choices.append(gr.Dropdown(label="", choices=[], value=None, visible=False))
                 elif kind == "choice":
                     opts = init_choice_vars[key]
                     fields.append(gr.Textbox(label="", visible=False, value=""))
                     choices.append(gr.Dropdown(label=display_label(key), choices=opts,
-                                               value=(opts[0] if opts else None), visible=True))
+                                               value=(opts[0] if opts else None), visible=vis))
                 else:
                     fields.append(gr.Textbox(label="", visible=False, value=""))
                     choices.append(gr.Dropdown(label="", choices=[], value=None, visible=False))
@@ -676,9 +731,17 @@ class ExtendedStyles(scripts.Script):
             reload_btn.click(on_reload, inputs=[folder],
                              outputs=[cat, style] + ctrls + [result, result_neg, gallery])
 
-            # live update of prompt and negative while filling in
-            for comp in ctrls:
+            # text boxes only update the final prompt
+            for comp in fields:
                 comp.change(build_results, inputs=[cat, style] + ctrls, outputs=[result, result_neg])
+
+            # menus also update the VISIBILITY of nested fields (show/hide the selected branch)
+            def on_choice_change(c, s, *vals):
+                sel = _selections_from_vals(c, s, vals)
+                return visibility_updates(c, s, sel) + list(build_results(c, s, *vals))
+            for comp in choices:
+                comp.change(on_choice_change, inputs=[cat, style] + ctrls,
+                            outputs=ctrls + [result, result_neg])
 
             # ---------------------------------------------------------- set style preview
             with gr.Accordion("Set style preview", open=False):
@@ -842,6 +905,32 @@ class ExtendedStyles(scripts.Script):
                              inputs=[folder, edit_cat, edit_style], outputs=_move_outputs)
                 down_btn.click(lambda f, c, s: on_move(f, c, s, 1),
                                inputs=[folder, edit_cat, edit_style], outputs=_move_outputs)
+
+            # ---------------------------------------------------------- help / syntax
+            with gr.Accordion("Help / Placeholder syntax", open=False):
+                gr.Markdown(
+                    "### Placeholder types (in the style text)\n\n"
+                    "**1. Text field** — `{prompt_Name}`\n"
+                    "A box to fill in. E.g. `a girl {prompt_Hair}` -> a *Hair* field.\n\n"
+                    "**2. Choice menu** — `{prompt_Name=opt1|opt2}`\n"
+                    "A dropdown (`|` separates the options). E.g. `{prompt_Gender=male|female}`.\n"
+                    "Use the **same name** in several spots and one menu controls them all (by index).\n\n"
+                    "**3. Menu with labels & branches** — `{prompt_Name=Label=>text|...}`\n"
+                    "- `Label=>text`: the menu shows *Label*, the prompt gets the *text* (right of `=>`).\n"
+                    "- The *text* can contain **nested placeholders**, which appear **only** when that "
+                    "branch is selected.\n"
+                    "- An **empty** option (`Label=>` with nothing after) makes that piece disappear.\n\n"
+                    "**Example**\n"
+                    "`a girl,{prompt_Top=Dressed=>wearing a {prompt_Color} shirt,|Nude=>}on a beach`\n"
+                    "- *Dressed* -> a **Color** field appears -> \"wearing a red shirt,\"\n"
+                    "- *Nude* -> the whole clause (and field) disappears\n\n"
+                    "### Notes\n"
+                    "- Fields **show/hide** based on the selected branch; the values you typed are **kept**.\n"
+                    "- Same-name occurrences must list options in the **same order** (they link by index).\n"
+                    "- Commas inside an option go into the prompt; extra spaces/commas are tidied up. "
+                    "An **empty** field is removed (optional).\n\n"
+                    "Hyphens in a name: `{prompt_Eye-Color}` -> the label shows \"Eye Color\"."
+                )
 
         return [enabled, cat, style] + ctrls
 

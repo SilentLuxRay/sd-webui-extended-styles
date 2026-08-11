@@ -20,8 +20,9 @@ many different results without rewriting it every time.
   placeholders in the prompt (text fields and menus interleaved).
 - **Branch variables (labels + nesting)** — an option can read `Label=>text`, so the menu shows a clean
   label (e.g. `Safe` / `Explicit`) while inserting a whole sub‑template. That sub‑template can contain
-  its own **nested placeholders**, so one choice can switch between entirely different pieces of text
-  (and their fields) — e.g. a safe/explicit toggle that adds or removes a clause with its own colour.
+  its own **nested placeholders** that **appear/disappear** with the choice, so one menu can switch
+  between entirely different pieces of text and fields — e.g. a safe/explicit toggle.
+- **In‑panel help** — a collapsible *Help / Placeholder syntax* section explains every placeholder type.
 - **NSFW preview filter** — a toggle that blurs the carousel thumbnails of styles whose name contains
   "NSFW" (case-insensitive); hover a thumbnail to peek. Remembered per browser.
 - **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
@@ -144,8 +145,8 @@ a girl,{prompt_Top=Dressed=>wearing a {prompt_ShirtColor} shirt,|Nude=>}on a bea
 
 Use the **same variable name in several spots** to toggle multiple parts of the prompt with one menu
 (they follow the same choice by index). A branch's `text` can even contain another `{prompt_X=...}`.
-Note: the nested fields stay visible in the panel even when their branch isn't selected — they are
-simply ignored until you pick that branch.
+Nested fields **show and hide** automatically based on the selected branch, and the values you've
+already typed are **kept** when you switch back.
 
 ## CSV format
 
@@ -183,6 +184,11 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v3.1.0
+- **Conditional fields** — nested placeholders now **show/hide** based on the selected branch (values
+  you've typed are kept when switching).
+- **In‑panel help** — a *Help / Placeholder syntax* accordion explaining all placeholder types.
 
 ### v3.0.0
 - **Branch variables** — new templating engine (brace‑aware, recursive). Choice options now support
