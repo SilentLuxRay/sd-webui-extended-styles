@@ -26,7 +26,7 @@ import shutil
 import gradio as gr
 import modules.scripts as scripts
 
-MAXSLOTS = 12  # max placeholders per style (each slot = a text box OR a menu)
+MAXSLOTS = 30  # max placeholders per style (each slot = a text box OR a menu)
 
 # ------------------------------------------------------------------ global state
 BASEDIR = scripts.basedir()

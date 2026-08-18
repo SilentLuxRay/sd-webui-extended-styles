@@ -159,7 +159,7 @@ Detailed portrait,portrait of a woman {prompt_face} with {prompt_haircolor},lowr
 ```
 
 To extend an existing single‑`{prompt}` style, just open the CSV and add more `{prompt_xxx}`
-placeholders wherever you need them. Up to **8** placeholders per style (see `MAXF` in the script).
+placeholders wherever you need them. Up to **30** placeholders per style (see `MAXSLOTS` in the script).
 
 To group styles inside one file, add rows whose name is wrapped in dashes, e.g. `----WOMEN----`. These
 are treated as separators and hidden from the style list (they still remain in the file).
@@ -184,6 +184,10 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v3.1.1
+- Fix: raise the placeholder limit per style from 12 to 30, so complex styles no longer lose the
+  fields past the 12th.
 
 ### v3.1.0
 - **Conditional fields** — nested placeholders now **show/hide** based on the selected branch (values
