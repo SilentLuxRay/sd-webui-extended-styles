@@ -23,6 +23,9 @@ many different results without rewriting it every time.
   its own **nested placeholders** that **appear/disappear** with the choice, so one menu can switch
   between entirely different pieces of text and fields — e.g. a safe/explicit toggle.
 - **In‑panel help** — a collapsible *Help / Placeholder syntax* section explains every placeholder type.
+- **Per‑style generation settings** — optionally save the **seed, sampler, steps, CFG and size** for a
+  style and load them back with one click (or automatically on selection). Stored in a separate file,
+  so your style CSVs stay untouched.
 - **NSFW preview filter** — a toggle that blurs the carousel thumbnails of styles whose name contains
   "NSFW" (case-insensitive); hover a thumbnail to peek. Remembered per browser.
 - **Preview carousel** — each style shows a thumbnail; click one to select it. Set a thumbnail from the
@@ -184,6 +187,11 @@ are treated as separators and hidden from the style list (they still remain in t
 | ![](images/preview-4.png) | ![](images/preview-5.png) |
 
 ## Changelog
+
+### v3.2.0
+- **Per‑style generation settings** — a *Style settings* panel to save the seed, sampler, steps, CFG and
+  size for the selected style (to a separate `style_settings.json`) and load them back with a button or
+  automatically. The style CSVs are left untouched.
 
 ### v3.1.1
 - Fix: raise the placeholder limit per style from 12 to 30, so complex styles no longer lose the

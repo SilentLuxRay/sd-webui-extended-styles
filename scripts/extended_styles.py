@@ -34,6 +34,8 @@ CONFIG_PATH = os.path.join(BASEDIR, "config.json")
 STYLES = {}   # { category: { name: {"pos": str, "neg": str} } }
 FILES = {}    # { category: path_of_the_csv_file }
 PREVIEW_DIR = os.path.join(BASEDIR, "previews")  # style preview thumbnails
+SETTINGS_PATH = os.path.join(BASEDIR, "style_settings.json")  # per-style settings (sidecar, CSVs untouched)
+SETTINGS_IDS = ["seed", "sampling", "steps", "cfg_scale", "width", "height"]  # saveable settings
 
 TAG_RE = r"<\s*([A-Za-z0-9_-]+)\s*:\s*([^>]*)>"    # optional <name: ...> in the prompt
 
@@ -59,6 +61,29 @@ def get_folder():
 
 def save_folder(folder):
     cfg = _load_cfg(); cfg["folder"] = folder; _save_cfg(cfg)
+
+# ------------------------------------------------------------------ per-style settings (sidecar)
+def _load_settings():
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def _save_settings(d):
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+def get_style_settings(cat, style):
+    return _load_settings().get(cat, {}).get(style)
+
+def save_style_settings(cat, style, values):
+    d = _load_settings()
+    d.setdefault(cat, {})[style] = values
+    _save_settings(d)
 
 # ------------------------------------------------------------------ CSV loading
 def scan_styles(folder):
@@ -608,6 +633,18 @@ class ExtendedStyles(scripts.Script):
     def show(self, is_img2img):
         return scripts.AlwaysVisible
 
+    def after_component(self, component, **kwargs):
+        # capture the main generation-setting components (seed, sampler, ...) by elem_id
+        eid = getattr(component, "elem_id", None) or kwargs.get("elem_id")
+        if not eid:
+            return
+        comps = getattr(self, "_comps", None)
+        if comps is None:
+            comps = self._comps = {}
+        for name in SETTINGS_IDS:
+            if eid == "txt2img_" + name or eid == "img2img_" + name:
+                comps[name] = component
+
     def ui(self, is_img2img):
         scan_styles(get_folder())
         cats = list(STYLES.keys())
@@ -742,6 +779,44 @@ class ExtendedStyles(scripts.Script):
             for comp in choices:
                 comp.change(on_choice_change, inputs=[cat, style] + ctrls,
                             outputs=ctrls + [result, result_neg])
+
+            # ---------------------------------------------------------- style settings
+            _comps = getattr(self, "_comps", {})
+            _cnames = [n for n in SETTINGS_IDS if n in _comps]
+            _clist = [_comps[n] for n in _cnames]
+            with gr.Accordion("Style settings (seed, sampler, ...)", open=False):
+                if not _clist:
+                    gr.Markdown("Settings unavailable (the main generation components were not captured "
+                                "on this UI).")
+                else:
+                    gr.Markdown("Save/load the generation settings **for the style selected above** "
+                                "(%s). Stored in a separate file, the CSVs are not touched." % ", ".join(_cnames))
+                    set_auto = gr.Checkbox(value=False,
+                                           label="Load settings automatically when you select a style")
+                    with gr.Row():
+                        save_set_btn = gr.Button("Save settings for this style", variant="primary")
+                        load_set_btn = gr.Button("Load settings")
+                    set_status = gr.Markdown("")
+
+                    def on_save_settings(c, st, *vals):
+                        if not st:
+                            return "Select a style first."
+                        save_style_settings(c, st, {n: v for n, v in zip(_cnames, vals)})
+                        return "Settings saved for \"%s\"." % st
+                    save_set_btn.click(on_save_settings, inputs=[cat, style] + _clist, outputs=[set_status])
+
+                    def on_load_settings(c, st):
+                        s = get_style_settings(c, st) or {}
+                        ups = [gr.update(value=s[n]) if n in s else gr.update() for n in _cnames]
+                        msg = ("Settings loaded for \"%s\"." % st) if s else "No settings saved for this style."
+                        return ups + [msg]
+                    load_set_btn.click(on_load_settings, inputs=[cat, style], outputs=_clist + [set_status])
+
+                    # auto-load on style change (only if the checkbox is on)
+                    def on_style_autoload(auto, c, st):
+                        s = (get_style_settings(c, st) or {}) if auto else {}
+                        return [gr.update(value=s[n]) if n in s else gr.update() for n in _cnames]
+                    style.change(on_style_autoload, inputs=[set_auto, cat, style], outputs=_clist)
 
             # ---------------------------------------------------------- set style preview
             with gr.Accordion("Set style preview", open=False):

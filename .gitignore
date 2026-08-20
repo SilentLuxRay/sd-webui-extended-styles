@@ -1,6 +1,9 @@
 # local config (contains a machine-specific path)
 config.json
 
+# per-style generation settings (user data)
+style_settings.json
+
 # python
 __pycache__/
 *.pyc
