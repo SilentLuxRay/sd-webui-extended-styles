@@ -656,6 +656,9 @@ class ExtendedStyles(scripts.Script):
             with gr.Row():
                 folder = gr.Textbox(value=get_folder(), label="CSV folder", scale=4)
                 reload_btn = gr.Button("Reload", scale=1)
+            # we persist the folder in config.json ourselves; keep Forge's ui-config from storing it
+            # (otherwise it restores the old path on restart, overriding ours)
+            folder.do_not_save_to_config = True
             with gr.Row():
                 cat = gr.Dropdown(choices=cats, value=c0, label="Category")
                 style = gr.Dropdown(choices=style_choices(c0), value=s0, label="Template")
