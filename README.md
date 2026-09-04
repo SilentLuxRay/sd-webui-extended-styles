@@ -189,9 +189,11 @@ are treated as separators and hidden from the style list (they still remain in t
 ## Changelog
 
 ### v3.2.2
-- Fix: **translation** no longer aborts for *every* field when a single one can't be
-  translated (already in English, or a misspelled word). Each field is now handled on its
-  own — the untranslatable ones are left as they are and the rest are translated normally.
+- Fix: **translation** no longer fails for *every* field because of one field. Two causes
+  are addressed: with many fields the old endpoint returned HTTP 429 (rate-limit), and a
+  field that was already English or misspelled could abort the whole batch. Translation now
+  uses a more reliable Google endpoint (fewer 429s, all fields in a single request) and is
+  resilient per field — anything untranslatable is left as-is while the rest is translated.
 
 ### v3.2.1
 - Fix: the **CSV folder** path is no longer overwritten on restart. It was also stored in Forge's

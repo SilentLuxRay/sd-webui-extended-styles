@@ -355,23 +355,29 @@ def _selections_from_vals(cat, name, vals):
     return sel
 
 def translate_text(text, target="en"):
-    """Translate text (auto -> target) via the free Google Translate endpoint.
-    Returns the original text unchanged when there is nothing to translate
-    (e.g. it is already in the target language, or a token the service can't parse),
-    so a single such field never breaks a batch."""
+    """Translate text (auto -> target) via Google's free endpoint.
+    Uses the clients5 / dict-chrome-ex endpoint, which is far less prone to HTTP 429
+    rate-limiting than the older gtx one and returns the whole translation as a single
+    string with newlines preserved (so a whole batch fits in one request). Returns the
+    original text unchanged when there is nothing to translate (already in the target
+    language, an unparseable token, ...), so a single such field never breaks a batch."""
     text = (text or "").strip()
     if not text:
         return text
     import requests
-    url = "https://translate.googleapis.com/translate_a/single"
-    params = {"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text}
-    r = requests.get(url, params=params, timeout=10)
+    url = "https://clients5.google.com/translate_a/t"
+    params = {"client": "dict-chrome-ex", "sl": "auto", "tl": target, "q": text}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, params=params, timeout=10, headers=headers)
     r.raise_for_status()
     data = r.json()
-    segs = data[0] if (isinstance(data, list) and data and data[0]) else None
-    if not segs:
-        return text  # nothing translatable -> keep the original
-    return "".join(seg[0] for seg in segs if seg and seg[0]) or text
+    # dict-chrome-ex response: [[translated, detected_lang], ...] (newlines preserved)
+    if isinstance(data, list) and data:
+        out = "".join(row[0] for row in data
+                      if isinstance(row, list) and row and isinstance(row[0], str))
+        if out:
+            return out
+    return text  # nothing translatable -> keep the original
 
 def translate_many(texts, target="en"):
     """Translate several texts. Tries ONE request (fast, avoids rate-limiting) and,
