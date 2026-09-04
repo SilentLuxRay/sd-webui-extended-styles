@@ -355,7 +355,10 @@ def _selections_from_vals(cat, name, vals):
     return sel
 
 def translate_text(text, target="en"):
-    """Translate text (auto -> target) via the free Google Translate endpoint."""
+    """Translate text (auto -> target) via the free Google Translate endpoint.
+    Returns the original text unchanged when there is nothing to translate
+    (e.g. it is already in the target language, or a token the service can't parse),
+    so a single such field never breaks a batch."""
     text = (text or "").strip()
     if not text:
         return text
@@ -365,18 +368,33 @@ def translate_text(text, target="en"):
     r = requests.get(url, params=params, timeout=10)
     r.raise_for_status()
     data = r.json()
-    return "".join(seg[0] for seg in data[0] if seg and seg[0])
+    segs = data[0] if (isinstance(data, list) and data and data[0]) else None
+    if not segs:
+        return text  # nothing translatable -> keep the original
+    return "".join(seg[0] for seg in segs if seg and seg[0]) or text
 
 def translate_many(texts, target="en"):
-    """Translate several texts in ONE request (avoids rate-limiting)."""
+    """Translate several texts. Tries ONE request (fast, avoids rate-limiting) and,
+    if the line count doesn't match, falls back to a resilient per-field pass where a
+    single problematic field (already English, a typo, ...) is left as-is instead of
+    aborting all the others."""
     if not texts:
         return []
-    joined = "\n".join(texts)
-    res = translate_text(joined, target)
-    parts = res.split("\n")
-    if len(parts) == len(texts):
-        return parts
-    return [translate_text(t, target) for t in texts]  # fallback
+    try:
+        joined = "\n".join(texts)
+        res = translate_text(joined, target)
+        parts = res.split("\n")
+        if len(parts) == len(texts):
+            return parts
+    except Exception:
+        pass
+    out = []
+    for t in texts:
+        try:
+            out.append(translate_text(t, target))
+        except Exception:
+            out.append(t)  # keep this field unchanged, don't break the rest
+    return out
 
 def js_set_prompts(pos_id, neg_id):
     """JS: write prompt and negative into the native boxes (notifying Gradio / prompt-all-in-one).

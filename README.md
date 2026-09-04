@@ -188,6 +188,11 @@ are treated as separators and hidden from the style list (they still remain in t
 
 ## Changelog
 
+### v3.2.2
+- Fix: **translation** no longer aborts for *every* field when a single one can't be
+  translated (already in English, or a misspelled word). Each field is now handled on its
+  own — the untranslatable ones are left as they are and the rest are translated normally.
+
 ### v3.2.1
 - Fix: the **CSV folder** path is no longer overwritten on restart. It was also stored in Forge's
   `ui-config.json`, which restored the old path over the extension's own `config.json`; the field is now
